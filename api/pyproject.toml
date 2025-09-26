@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tactyo-api"
+version = "0.1.0"
+description = "Backend FastAPI para o Tactyo"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.ruff]
+line-length = 100
+select = [
+  "E",
+  "F",
+  "I",
+  "UP",
+]
+ignore = [
+  "E501",
+]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+pythonpath = ["."]
