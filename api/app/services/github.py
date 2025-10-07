@@ -4,7 +4,7 @@ import asyncio
 import uuid
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import httpx
 from fastapi import HTTPException, status
@@ -50,6 +50,8 @@ class ProjectItemPayload:
     end_date: Optional[datetime]
     due_date: Optional[datetime]
     field_values: Dict[str, Any]
+    epic_option_id: Optional[str]
+    epic_name: Optional[str]
 
 
 @dataclass
@@ -69,11 +71,14 @@ class ParsedFieldDetails:
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
     due_date: Optional[datetime] = None
+    epic_option_id: Optional[str] = None
+    epic_value: Optional[str] = None
 
 
 START_DATE_ALIASES = {"start date", "start", "kickoff", "início", "inicio"}
 END_DATE_ALIASES = {"end date", "finish", "fim", "conclusão", "conclusao"}
 DUE_DATE_ALIASES = {"due date", "target date", "deadline", "entrega"}
+EPIC_FIELD_ALIASES = {"epic", "épico", "epico", "parent issue", "parent", "epic link"}
 
 
 async def store_github_token(db: AsyncSession, account: Account, token: str) -> None:
@@ -285,7 +290,7 @@ async def fetch_project_items(client: GithubGraphQLClient, project_node_id: str)
                   __typename
                   ... on ProjectV2ItemFieldTextValue { field { ... on ProjectV2FieldCommon { name } } text }
                   ... on ProjectV2ItemFieldNumberValue { field { ... on ProjectV2FieldCommon { name } } number }
-                  ... on ProjectV2ItemFieldSingleSelectValue { field { ... on ProjectV2FieldCommon { name } } name }
+                  ... on ProjectV2ItemFieldSingleSelectValue { field { ... on ProjectV2FieldCommon { name } } name optionId }
                   ... on ProjectV2ItemFieldDateValue { field { ... on ProjectV2FieldCommon { name dataType } } date }
                   ... on ProjectV2ItemFieldIterationValue {
                     field { ... on ProjectV2FieldCommon { name } }
@@ -338,6 +343,8 @@ async def fetch_project_items(client: GithubGraphQLClient, project_node_id: str)
                     end_date=field_details.end_date,
                     due_date=field_details.due_date,
                     field_values=field_values,
+                    epic_option_id=field_details.epic_option_id,
+                    epic_name=field_details.epic_value or field_values.get("Epic"),
                 )
             )
         page_info = items_data.get("pageInfo", {})
@@ -345,6 +352,166 @@ async def fetch_project_items(client: GithubGraphQLClient, project_node_id: str)
             break
         after = page_info.get("endCursor")
     return items
+
+
+async def fetch_project_item_comments(
+    client: GithubGraphQLClient,
+    content_node_id: str,
+    limit: int = 30,
+) -> List[dict[str, Any]]:
+    query = """
+    query($id: ID!, $limit: Int!) {
+      node(id: $id) {
+        __typename
+        ... on Issue {
+          comments(last: $limit) {
+            nodes {
+              id
+              body
+              createdAt
+              updatedAt
+              url
+              author {
+                login
+                url
+                avatarUrl
+              }
+            }
+          }
+        }
+        ... on PullRequest {
+          comments(last: $limit) {
+            nodes {
+              id
+              body
+              createdAt
+              updatedAt
+              url
+              author {
+                login
+                url
+                avatarUrl
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+
+    data = await client.execute(query, {"id": content_node_id, "limit": limit})
+    node = data.get("node") or {}
+    if not node:
+        return []
+
+    raw_comments: List[dict[str, Any]] = []
+    typename = node.get("__typename")
+    if typename == "Issue":
+        raw_comments = node.get("comments", {}).get("nodes", []) or []
+    elif typename == "PullRequest":
+        raw_comments = node.get("comments", {}).get("nodes", []) or []
+
+    comments: List[dict[str, Any]] = []
+    for comment in raw_comments:
+        author = comment.get("author") or {}
+        comments.append(
+            {
+                "id": comment.get("id"),
+                "body": comment.get("body") or "",
+                "created_at": comment.get("createdAt"),
+                "updated_at": comment.get("updatedAt"),
+                "url": comment.get("url"),
+                "author_login": author.get("login"),
+                "author_url": author.get("url"),
+                "author_avatar_url": author.get("avatarUrl"),
+            }
+        )
+
+    return comments
+
+
+async def fetch_project_item_details(
+    client: GithubGraphQLClient,
+    content_node_id: str,
+) -> dict[str, Any]:
+    query = """
+    query($id: ID!) {
+      node(id: $id) {
+        __typename
+        ... on Issue {
+          id
+          number
+          title
+          body
+          bodyText
+          state
+          url
+          createdAt
+          updatedAt
+          author {
+            login
+            url
+            avatarUrl
+          }
+          labels(first: 20) {
+            nodes {
+              name
+              color
+            }
+          }
+        }
+        ... on PullRequest {
+          id
+          number
+          title
+          body
+          bodyText
+          state
+          merged
+          url
+          createdAt
+          updatedAt
+          author {
+            login
+            url
+            avatarUrl
+          }
+          labels(first: 20) {
+            nodes {
+              name
+              color
+            }
+          }
+        }
+      }
+    }
+    """
+
+    data = await client.execute(query, {"id": content_node_id})
+    node = data.get("node") or {}
+    if not node:
+        return {}
+
+    labels_data = node.get("labels", {}).get("nodes", []) if isinstance(node.get("labels"), dict) else []
+    author = node.get("author") or {}
+
+    return {
+        "id": node.get("id"),
+        "content_type": node.get("__typename"),
+        "number": node.get("number"),
+        "title": node.get("title"),
+        "body": node.get("body"),
+        "body_text": node.get("bodyText"),
+        "state": node.get("state"),
+        "merged": node.get("merged"),
+        "url": node.get("url"),
+        "created_at": node.get("createdAt"),
+        "updated_at": node.get("updatedAt"),
+        "author_login": author.get("login"),
+        "author_url": author.get("url"),
+        "author_avatar_url": author.get("avatarUrl"),
+        "labels": labels_data or [],
+    }
 
 
 def parse_field_details(nodes: List[dict[str, Any]]) -> tuple[Dict[str, Any], ParsedFieldDetails]:
@@ -364,6 +531,12 @@ def parse_field_details(nodes: List[dict[str, Any]]) -> tuple[Dict[str, Any], Pa
             values[name] = node.get("number")
         elif typename == "ProjectV2ItemFieldSingleSelectValue":
             values[name] = node.get("name")
+            if lower_name in EPIC_FIELD_ALIASES:
+                details.epic_value = node.get("name")
+                option_id = node.get("optionId") or node.get("optionIDs")
+                if isinstance(option_id, list):
+                    option_id = option_id[0] if option_id else None
+                details.epic_option_id = option_id
         elif typename == "ProjectV2ItemFieldIterationValue":
             values[name] = node.get("title")
             details.iteration_title = node.get("title")
@@ -511,6 +684,8 @@ async def upsert_project_items(
             item.end_date = payload.end_date
             item.due_date = payload.due_date
             item.field_values = payload.field_values
+            item.epic_option_id = payload.epic_option_id
+            item.epic_name = payload.epic_name
             item.updated_at = payload.updated_at
             item.last_synced_at = datetime.now(timezone.utc)
             item.remote_updated_at = payload.remote_updated_at
@@ -534,6 +709,8 @@ async def upsert_project_items(
                 end_date=payload.end_date,
                 due_date=payload.due_date,
                 field_values=payload.field_values,
+                epic_option_id=payload.epic_option_id,
+                epic_name=payload.epic_name,
                 updated_at=payload.updated_at,
                 remote_updated_at=payload.remote_updated_at,
                 last_synced_at=datetime.now(timezone.utc),
@@ -558,12 +735,19 @@ async def sync_github_project(
     return count
 
 
+async def _load_project_fields(db: AsyncSession, project_id: int) -> list[GithubProjectField]:
+    stmt = select(GithubProjectField).where(GithubProjectField.project_id == project_id)
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
 async def sync_project_fields(
     db: AsyncSession,
     project: GithubProject,
     field_mappings: dict[str, Any],
 ) -> None:
-    existing = {field.field_id: field for field in project.fields}
+    existing_fields = await _load_project_fields(db, project.id)
+    existing = {field.field_id: field for field in existing_fields}
     seen: set[str] = set()
 
     for name, data in field_mappings.items():
@@ -597,8 +781,8 @@ async def sync_project_fields(
             )
         seen.add(field_id)
 
-    for field_id, field in existing.items():
-        if field_id not in seen:
+    for field in existing_fields:
+        if field.field_id not in seen:
             await db.delete(field)
 
 
@@ -610,8 +794,18 @@ def ensure_timezone(value: Optional[datetime]) -> Optional[datetime]:
     return value.astimezone(timezone.utc)
 
 
-def resolve_iteration_field(project: GithubProject) -> Optional[GithubProjectField]:
-    for field in project.fields:
+async def resolve_iteration_field(
+    db: AsyncSession,
+    project: GithubProject,
+) -> Optional[GithubProjectField]:
+    fields = await _load_project_fields(db, project.id)
+    return _resolve_iteration_field_from_collection(fields)
+
+
+def _resolve_iteration_field_from_collection(
+    fields: Iterable[GithubProjectField],
+) -> Optional[GithubProjectField]:
+    for field in fields:
         field_type = (field.field_type or "").lower()
         field_name = (field.field_name or "").lower()
         if field_type in {"iteration", "projectv2iterationfield"} or field_name == "iteration":
@@ -642,6 +836,7 @@ def resolve_iteration_option(
 
 async def apply_local_project_item_updates(
     db: AsyncSession,
+    account: Account,
     project: GithubProject,
     item: ProjectItem,
     updates: dict[str, Any],
@@ -659,6 +854,26 @@ async def apply_local_project_item_updates(
 
     has_changes = False
 
+    if "status" in updates:
+        raw_status = updates.get("status")
+        if isinstance(raw_status, str):
+            stripped_status = raw_status.strip()
+            new_status = stripped_status if stripped_status else None
+        else:
+            new_status = None
+
+        if new_status and project.status_columns:
+            allowed_statuses = [column for column in project.status_columns if column]
+            if new_status not in allowed_statuses:
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Status inválido para este projeto")
+
+        current_normalized = item.status.strip() if isinstance(item.status, str) else None
+        if new_status != current_normalized:
+            await _sync_remote_status(db, account, project, item, new_status)
+
+        item.status = new_status
+        has_changes = True
+
     if "start_date" in updates:
         item.start_date = start_date
         has_changes = True
@@ -672,7 +887,7 @@ async def apply_local_project_item_updates(
         has_changes = True
 
     if "iteration_id" in updates:
-        iteration_field = resolve_iteration_field(project)
+        iteration_field = await resolve_iteration_field(db, project)
         iteration_id = updates.get("iteration_id")
         if iteration_id:
             title_from_options, iteration_start, iteration_end = resolve_iteration_option(iteration_field, iteration_id)
@@ -693,6 +908,130 @@ async def apply_local_project_item_updates(
         await db.flush()
 
     return item
+
+
+async def _sync_remote_status(
+    db: AsyncSession,
+    account: Account,
+    project: GithubProject,
+    item: ProjectItem,
+    new_status: Optional[str],
+) -> None:
+    if not project.project_node_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Projeto sem identificador do GitHub")
+    if not item.item_node_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Item sem identificador do Project")
+
+    status_field = await _resolve_status_field(db, project)
+    if not status_field:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Campo Status não está configurado no projeto")
+
+    token = await get_github_token(db, account)
+
+    async with GithubGraphQLClient(token) as client:
+        if new_status is None:
+            await _clear_remote_status(
+                client,
+                project.project_node_id,
+                item.item_node_id,
+                status_field.field_id,
+            )
+            return
+
+        option_id = _match_status_option(status_field.options, new_status)
+        if not option_id:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Status indisponível no GitHub")
+
+        await _update_remote_single_select(
+            client,
+            project.project_node_id,
+            item.item_node_id,
+            status_field.field_id,
+            option_id,
+        )
+
+
+async def _resolve_status_field(db: AsyncSession, project: GithubProject) -> Optional[GithubProjectField]:
+    fields = await _load_project_fields(db, project.id)
+    for field in fields:
+        if (field.field_name or "").lower() == "status":
+            return field
+    return None
+
+
+def _match_status_option(options: Any, status_name: str) -> Optional[str]:
+    normalized = status_name.strip().lower()
+
+    if isinstance(options, list):
+        iterable = options
+    elif isinstance(options, dict):
+        iterable = options.get("options") or options.get("values") or []
+    else:
+        iterable = []
+
+    for option in iterable:
+        if not isinstance(option, dict):
+            continue
+        name = option.get("name") or option.get("title")
+        if isinstance(name, str) and name.strip().lower() == normalized:
+            option_id = option.get("id")
+            if isinstance(option_id, str) and option_id:
+                return option_id
+    return None
+
+
+async def _update_remote_single_select(
+    client: GithubGraphQLClient,
+    project_node_id: str,
+    item_node_id: str,
+    field_id: str,
+    option_id: str,
+) -> None:
+    mutation = """
+    mutation($input: UpdateProjectV2ItemFieldValueInput!) {
+      updateProjectV2ItemFieldValue(input: $input) {
+        projectV2Item {
+          id
+        }
+      }
+    }
+    """
+    variables = {
+        "input": {
+            "projectId": project_node_id,
+            "itemId": item_node_id,
+            "fieldId": field_id,
+            "value": {
+                "singleSelectOptionId": option_id,
+            },
+        }
+    }
+    await client.execute(mutation, variables)
+
+
+async def _clear_remote_status(
+    client: GithubGraphQLClient,
+    project_node_id: str,
+    item_node_id: str,
+    field_id: str,
+) -> None:
+    mutation = """
+    mutation($input: ClearProjectV2ItemFieldValueInput!) {
+      clearProjectV2ItemFieldValue(input: $input) {
+        projectV2Item {
+          id
+        }
+      }
+    }
+    """
+    variables = {
+        "input": {
+            "projectId": project_node_id,
+            "itemId": item_node_id,
+            "fieldId": field_id,
+        }
+    }
+    await client.execute(mutation, variables)
 
 
 def extract_status_columns(field_mappings: dict[str, Any]) -> list[str] | None:

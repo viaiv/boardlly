@@ -1,18 +1,21 @@
-"""Bootstraps the Tactyo backend when using a local virtualenv.
+"""Ferramenta para preparar e iniciar a API localmente.
 
-The script performs three steps:
-1. Checks whether core dependencies are importable (helpful to catch missing installs early).
-2. Executes Alembic migrations so the database schema is aligned with the codebase.
-3. Starts the FastAPI application through uvicorn with auto-reload enabled.
+O script executa três etapas principais:
+1. Verifica se as dependências núcleo estão disponíveis no ambiente virtual.
+2. Aplica as migrações Alembic necessárias para alinhar o banco de dados.
+3. Inicia o servidor FastAPI via uvicorn com recarregamento automático.
+
+Use as flags da CLI para pular etapas ou executá-las isoladamente.
 """
 
 from __future__ import annotations
 
+import argparse
 import importlib
 import logging
 import pathlib
 import sys
-from typing import Iterable
+from typing import Iterable, Sequence
 
 from alembic import command
 from alembic.config import Config
@@ -30,15 +33,64 @@ REQUIRED_PACKAGES: Iterable[str] = (
     "pydantic_settings",
 )
 
-logger = logging.getLogger("tactyo.run")
+logger = logging.getLogger("boardlly.run")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 
-def verify_dependencies() -> None:
-    """Ensure all required packages are importable within the current environment."""
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Executa checagens, migrações e sobe o servidor da API.",
+    )
+    parser.add_argument(
+        "--skip-checks",
+        action="store_true",
+        help="Não valida as dependências antes de continuar.",
+    )
+    parser.add_argument(
+        "--skip-migrations",
+        action="store_true",
+        help="Não executa as migrações Alembic.",
+    )
+    parser.add_argument(
+        "--check-only",
+        action="store_true",
+        help="Executa apenas as verificações de dependências e encerra.",
+    )
+    parser.add_argument(
+        "--migrate-only",
+        action="store_true",
+        help="Executa verificações e migrações sem subir o servidor.",
+    )
+    parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="Host exposto pelo uvicorn (padrão: 0.0.0.0).",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Porta exposta pelo uvicorn (padrão: 8000).",
+    )
+    parser.add_argument(
+        "--no-reload",
+        action="store_true",
+        help="Desativa o recarregamento automático de código.",
+    )
+
+    args = parser.parse_args(argv)
+
+    if args.check_only and args.migrate_only:
+        parser.error("Use apenas uma das flags --check-only ou --migrate-only.")
+
+    return args
+
+
+def verify_dependencies(packages: Iterable[str] = REQUIRED_PACKAGES) -> None:
+    """Garantir que os pacotes principais podem ser importados."""
 
     missing: list[str] = []
-    for package in REQUIRED_PACKAGES:
+    for package in packages:
         module_name = package.replace("-", "_").split("[", 1)[0]
         try:
             importlib.import_module(module_name)
@@ -49,7 +101,7 @@ def verify_dependencies() -> None:
         requirement_hint = "pip install -r api/requirements-dev.txt"
         raise RuntimeError(
             "Dependências ausentes: "
-            + ", ".join(missing)
+            + ", ".join(sorted(missing))
             + f". Execute `{requirement_hint}` no seu venv antes de continuar."
         )
 
@@ -57,15 +109,15 @@ def verify_dependencies() -> None:
 
 
 def run_migrations() -> None:
-    """Apply Alembic migrations up to head."""
+    """Aplicar migrações alembic até a head."""
 
     alembic_ini = REPO_ROOT / "api" / "alembic.ini"
     if not alembic_ini.exists():
         raise FileNotFoundError(f"Arquivo Alembic não encontrado: {alembic_ini}")
 
     config = Config(str(alembic_ini))
-    config.set_main_option("script_location", str(REPO_ROOT / "api" / "alembic"))
-    config.set_main_option("sqlalchemy.url", str(_database_url()))
+    config.set_main_option("script_location", str(BASE_DIR / "alembic"))
+    config.set_main_option("sqlalchemy.url", _database_url())
 
     logger.info("Aplicando migrações Alembic...")
     command.upgrade(config, "head")
@@ -74,8 +126,8 @@ def run_migrations() -> None:
 
 def _load_settings():
     try:
-        from app.core.config import settings  # noqa: WPS433 (lazy import to delay validation)
-    except Exception as exc:  # pragma: no cover - configuration issues handled at runtime
+        from app.core.config import settings  # noqa: WPS433 (import tardio para validar no runtime)
+    except Exception as exc:  # pragma: no cover - problemas de config tratados em tempo real
         raise RuntimeError(
             "Falha ao carregar configurações. Verifique variáveis de ambiente obrigatórias, "
             "como TACTYO_SESSION_SECRET (mínimo 16 caracteres) e TACTYO_DATABASE_URL."
@@ -88,27 +140,51 @@ def _database_url() -> str:
     return str(settings.database_url)
 
 
-def start_server() -> None:
-    """Run uvicorn pointing at main:app with reload enabled."""
+def start_server(*, host: str, port: int, reload: bool) -> None:
+    """Iniciar o uvicorn apontando para main:app."""
 
     import uvicorn
 
-    logger.info("Inicializando servidor uvicorn em http://0.0.0.0:8000")
+    logger.info("Inicializando servidor uvicorn em http://%s:%s", host, port)
+
+    uvicorn_kwargs: dict[str, object] = {"reload": reload}
+    if reload:
+        uvicorn_kwargs.update(
+            reload_delay=0.25,
+            reload_dirs=[str(BASE_DIR / "app")],
+        )
+
     uvicorn.run(
         "main:app",
         app_dir=str(BASE_DIR),
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        reload_delay=0.25,
-        reload_dirs=[str(BASE_DIR)],
+        host=host,
+        port=port,
+        **uvicorn_kwargs,
     )
 
 
-def main() -> None:
-    verify_dependencies()
-    run_migrations()
-    start_server()
+def main(argv: Sequence[str] | None = None) -> None:
+    args = parse_args(argv)
+
+    if args.skip_checks:
+        logger.info("Pulando verificação de dependências a pedido.")
+    else:
+        verify_dependencies()
+
+    if args.check_only:
+        logger.info("Verificações concluídas. Nada mais a fazer.")
+        return
+
+    if args.skip_migrations:
+        logger.info("Pulando migrações Alembic a pedido.")
+    else:
+        run_migrations()
+
+    if args.migrate_only:
+        logger.info("Migrações concluídas. Encerrando conforme solicitado.")
+        return
+
+    start_server(host=args.host, port=args.port, reload=not args.no_reload)
 
 
 if __name__ == "__main__":
@@ -117,3 +193,6 @@ if __name__ == "__main__":
     except RuntimeError as exc:
         logger.error(str(exc))
         sys.exit(1)
+    except KeyboardInterrupt:  # pragma: no cover - interação manual
+        logger.info("Execução interrompida pelo usuário.")
+        sys.exit(130)

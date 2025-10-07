@@ -58,6 +58,8 @@ class ProjectItemResponse(BaseModel):
     last_local_edit_at: datetime | None = None
     last_local_edit_by: UUID | None = None
     field_values: dict | None = None
+    epic_option_id: str | None = None
+    epic_name: str | None = None
 
     class Config:
         from_attributes = True
@@ -69,4 +71,43 @@ class ProjectItemUpdateRequest(BaseModel):
     due_date: datetime | None = None
     iteration_id: str | None = None
     iteration_title: str | None = None
+    status: str | None = None
     remote_updated_at: datetime | None = None
+
+
+class ProjectItemCommentResponse(BaseModel):
+    id: str
+    author: str | None = None
+    author_url: str | None = None
+    author_avatar_url: str | None = None
+    body: str
+    url: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ProjectItemLabelResponse(BaseModel):
+    name: str
+    color: str | None = None
+
+
+class ProjectItemAuthorResponse(BaseModel):
+    login: str | None = None
+    url: str | None = None
+    avatar_url: str | None = None
+
+
+class ProjectItemDetailResponse(BaseModel):
+    id: str
+    content_type: str | None = None
+    number: int | None = None
+    title: str | None = None
+    body: str | None = None
+    body_text: str | None = None
+    state: str | None = None
+    url: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    merged: bool | None = None
+    author: ProjectItemAuthorResponse | None = None
+    labels: list[ProjectItemLabelResponse] = Field(default_factory=list)

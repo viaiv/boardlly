@@ -24,7 +24,7 @@ Gerar um **MVP** de um app web autenticado que exibe um **dashboard** de progres
 
 * **/** (Overview): KPIs + gráficos (itens por status, burndown/burnup).
 * **/roadmap**: Timeline/Gantt agrupado por Iteration ou por campos de data.
-* **/items**: lista filtrável de itens do Project (status, assignee, iteration, search).
+* **/roadmap**: lista filtrável de itens do Project (status, assignee, iteration, search) com visão em quadro e timeline.
 * **/requests**: lista de solicitações; botão “Nova Solicitação”.
 * **/requests/:id**: detalhe da solicitação, comentários, botão **Aprovar**/**Rejeitar**.
 * **/backlog**: lista de backlog interno (prioridade, estimate, status); ação para criar Issue/adicionar ao Project se ainda não existir.
@@ -456,7 +456,7 @@ paths:
 
 1. **Como viewer**, quero ver o dashboard com KPIs e lista de itens para entender rapidamente o andamento.
 
-   * *Aceite*: Ao acessar `/`, vejo cards de KPI e um gráfico simples. A lista em `/items` permite filtrar por Status.
+   * *Aceite*: Ao acessar `/`, vejo cards de KPI e um gráfico simples. A visão em `/roadmap` permite filtrar por Status.
 2. **Como editor**, quero criar solicitações com título, descrição, impacto e prioridade.
 
    * *Aceite*: Em `/requests`, consigo criar; status inicial `under_review`.

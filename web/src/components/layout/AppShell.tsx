@@ -15,7 +15,6 @@ import { apiFetch } from "@/lib/api";
 const baseNavigation = [
   { to: "/", label: "Overview" },
   { to: "/roadmap", label: "Roadmap" },
-  { to: "/items", label: "Itens" },
   { to: "/requests", label: "Solicitações" },
   { to: "/backlog", label: "Backlog" },
   { to: "/settings", label: "Configurações" },

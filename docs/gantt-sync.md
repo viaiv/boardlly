@@ -42,12 +42,12 @@
 4. **Mappings**:
    - Tabela `github_project_field` (nova) para armazenar `field_name`, `field_id`, `field_type`, `options` (para iteration IDs).
 5. **API**:
-   - `/api/projects/current/items` passa a retornar as datas normalizadas.
+   - `/api/projects/current/items` passa a retornar as datas normalizadas e vínculos (`iteration_id`, `iteration_duration`, `epic_option_id`, `epic_name`).
    - Paginação ou filtros opcionais para janelas de tempo (ex.: `?from=2025-01-01&to=2025-03-31`).
 
 ## Sincronização (Tactyo → GitHub)
 1. **Endpoints REST**
-   - `PATCH /api/projects/current/items/{id}` com payload `{ start_date?, end_date?, iteration_id?, due_date? }`.
+   - `PATCH /api/projects/current/items/{id}` com payload `{ start_date?, end_date?, iteration_id?, due_date?, epic_option_id? }`.
    - Validar permissões (`owner|admin` por default, permitir delegar?).
    - Verificar `remote_updated_at` enviado pelo cliente para evitar overwrite: recusar caso o GitHub tenha sido alterado depois.
 2. **Mutações GraphQL**
@@ -118,4 +118,3 @@
 - Definir política quando apenas `due_date` existe — assumir `start_date = due_date - 1 dia` ou exigir start explícito?
 - Avaliar uso de webhooks vs. cron para sync incremental.
 - Necessidade de histórico de mudanças (audit log externo?).
-
