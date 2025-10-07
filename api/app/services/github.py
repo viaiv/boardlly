@@ -75,10 +75,37 @@ class ParsedFieldDetails:
     epic_value: Optional[str] = None
 
 
+@dataclass
+class IterationOptionData:
+    id: str
+    title: str
+    start_date: Optional[datetime]
+    end_date: Optional[datetime]
+
+
+@dataclass
+class EpicOptionData:
+    id: str
+    name: str
+    color: Optional[str]
+
+
 START_DATE_ALIASES = {"start date", "start", "kickoff", "início", "inicio"}
 END_DATE_ALIASES = {"end date", "finish", "fim", "conclusão", "conclusao"}
 DUE_DATE_ALIASES = {"due date", "target date", "deadline", "entrega"}
 EPIC_FIELD_ALIASES = {"epic", "épico", "epico", "parent issue", "parent", "epic link"}
+SINGLE_SELECT_ALLOWED_COLORS = {
+    "GRAY",
+    "BLUE",
+    "GREEN",
+    "YELLOW",
+    "ORANGE",
+    "RED",
+    "PURPLE",
+    "PINK",
+    "BROWN",
+    "BLACK",
+}
 
 
 async def store_github_token(db: AsyncSession, account: Account, token: str) -> None:
@@ -173,7 +200,7 @@ async def fetch_project_metadata(client: GithubGraphQLClient, owner: str, number
               __typename
               ... on ProjectV2FieldCommon { id name dataType }
               ... on ProjectV2IterationField { id name configuration { iterations { id title startDate duration } } }
-              ... on ProjectV2SingleSelectField { id name options { id name } }
+              ... on ProjectV2SingleSelectField { id name options { id name color } }
             }
           }
         }
@@ -187,7 +214,7 @@ async def fetch_project_metadata(client: GithubGraphQLClient, owner: str, number
               __typename
               ... on ProjectV2FieldCommon { id name dataType }
               ... on ProjectV2IterationField { id name configuration { iterations { id title startDate duration } } }
-              ... on ProjectV2SingleSelectField { id name options { id name } }
+              ... on ProjectV2SingleSelectField { id name options { id name color } }
             }
           }
         }
@@ -729,7 +756,15 @@ async def sync_github_project(
     token: str,
 ) -> int:
     async with GithubGraphQLClient(token) as client:
+        # Buscar metadados atualizados do projeto (campos e opções)
+        metadata = await fetch_project_metadata(client, project.owner_login, project.project_number)
+        project.field_mappings = metadata.field_mappings
+        await sync_project_fields(db, project, metadata.field_mappings)
+        await db.flush()
+
+        # Buscar itens do projeto
         items = await fetch_project_items(client, project.project_node_id)
+
     count = await upsert_project_items(db, account, project, items)
     await db.commit()
     return count
@@ -750,6 +785,8 @@ async def sync_project_fields(
     existing = {field.field_id: field for field in existing_fields}
     seen: set[str] = set()
 
+    print(f"DEBUG: sync_project_fields - Total de campos: {len(field_mappings)}")
+
     for name, data in field_mappings.items():
         if not isinstance(data, dict):
             continue
@@ -761,14 +798,19 @@ async def sync_project_fields(
         options: Any = None
         if isinstance(data.get("options"), list):
             options = data.get("options")
+            print(f"DEBUG: Campo '{name}' - tipo: {field_type}, options (list): {options}")
         elif isinstance(data.get("configuration"), dict):
             options = data.get("configuration")
+            print(f"DEBUG: Campo '{name}' - tipo: {field_type}, configuration (dict): {options}")
+        else:
+            print(f"DEBUG: Campo '{name}' - tipo: {field_type}, SEM options ou configuration. Data: {data}")
 
         existing_field = existing.get(field_id)
         if existing_field:
             existing_field.field_name = name
             existing_field.field_type = field_type
             existing_field.options = options
+            print(f"DEBUG: Campo '{name}' ATUALIZADO - options final: {options}")
         else:
             db.add(
                 GithubProjectField(
@@ -779,6 +821,7 @@ async def sync_project_fields(
                     options=options,
                 )
             )
+            print(f"DEBUG: Campo '{name}' CRIADO - options final: {options}")
         seen.add(field_id)
 
     for field in existing_fields:
@@ -813,6 +856,101 @@ def _resolve_iteration_field_from_collection(
     return None
 
 
+async def resolve_epic_field(
+    db: AsyncSession,
+    project: GithubProject,
+) -> Optional[GithubProjectField]:
+    fields = await _load_project_fields(db, project.id)
+    return _resolve_epic_field_from_collection(fields)
+
+
+def _resolve_epic_field_from_collection(
+    fields: Iterable[GithubProjectField],
+) -> Optional[GithubProjectField]:
+    alias_candidates = {alias.lower() for alias in EPIC_FIELD_ALIASES}
+    print(f"DEBUG: Procurando campo Epic. Aliases: {alias_candidates}")
+    fields_list = list(fields)
+
+    for field in fields_list:
+        field_type = (field.field_type or "").lower()
+        field_name = (field.field_name or "").lower()
+        print(f"DEBUG: Verificando campo - name: '{field_name}', type: '{field_type}', options: {field.options}")
+
+        # IMPORTANTE: Só considerar campos Single Select
+        if field_type not in {"single_select", "projectv2singleselectfield"}:
+            continue
+
+        # Verificar se o nome contém algum dos aliases
+        if any(alias in field_name for alias in alias_candidates):
+            print(f"DEBUG: Campo Epic encontrado: {field.field_name}")
+            return field
+
+    print(f"DEBUG: Campo Epic NÃO encontrado entre {len(fields_list)} campos")
+    return None
+
+
+async def list_iteration_options(db: AsyncSession, project: GithubProject) -> list[IterationOptionData]:
+    field = await resolve_iteration_field(db, project)
+    return _extract_iteration_options(field)
+
+
+def _extract_iteration_options(iteration_field: Optional[GithubProjectField]) -> list[IterationOptionData]:
+    if not iteration_field or not iteration_field.options:
+        return []
+    options_raw = iteration_field.options
+    iterations: list[dict[str, Any]] = []
+    if isinstance(options_raw, dict):
+        iterations = options_raw.get("iterations") or []
+    elif isinstance(options_raw, list):
+        iterations = options_raw
+
+    collected: list[IterationOptionData] = []
+    for option in iterations or []:
+        option_id = option.get("id")
+        title = option.get("title") or option.get("name")
+        if not option_id or not title:
+            continue
+        start = parse_date_value(option.get("startDate"))
+        end = compute_iteration_end(start, option.get("duration"))
+        collected.append(IterationOptionData(id=option_id, title=title, start_date=start, end_date=end))
+    return collected
+
+
+async def list_epic_options(db: AsyncSession, project: GithubProject) -> list[EpicOptionData]:
+    field = await resolve_epic_field(db, project)
+    return _extract_epic_options(field)
+
+
+def _extract_epic_options(epic_field: Optional[GithubProjectField]) -> list[EpicOptionData]:
+    if not epic_field or not epic_field.options:
+        print(f"DEBUG: _extract_epic_options - epic_field={epic_field}, options={epic_field.options if epic_field else None}")
+        return []
+
+    options_raw = epic_field.options
+    print(f"DEBUG: _extract_epic_options - options_raw type: {type(options_raw)}, value: {options_raw}")
+
+    entries: list[dict[str, Any]] = []
+    if isinstance(options_raw, dict):
+        entries = options_raw.get("options") or []
+        print(f"DEBUG: Extraindo de dict, entries: {entries}")
+    elif isinstance(options_raw, list):
+        entries = options_raw
+        print(f"DEBUG: Extraindo de list, entries: {entries}")
+
+    collected: list[EpicOptionData] = []
+    for option in entries or []:
+        option_id = option.get("id")
+        name = option.get("name") or option.get("title")
+        print(f"DEBUG: Processando opção - id: {option_id}, name: {name}, raw: {option}")
+        if not option_id or not name:
+            continue
+        color = option.get("color") if isinstance(option.get("color"), str) else None
+        collected.append(EpicOptionData(id=option_id, name=name, color=color))
+
+    print(f"DEBUG: _extract_epic_options - coletou {len(collected)} opções")
+    return collected
+
+
 def resolve_iteration_option(
     iteration_field: Optional[GithubProjectField],
     iteration_id: Optional[str],
@@ -832,6 +970,221 @@ def resolve_iteration_option(
             end = compute_iteration_end(start, option.get("duration"))
             return title, start, end
     return None, None, None
+
+
+def resolve_epic_option(
+    epic_field: Optional[GithubProjectField],
+    epic_option_id: Optional[str],
+) -> Optional[str]:
+    if not epic_field or not epic_option_id:
+        return None
+
+    options_raw = epic_field.options
+    entries: list[dict[str, Any]] = []
+    if isinstance(options_raw, dict):
+        entries = options_raw.get("options") or []
+    elif isinstance(options_raw, list):
+        entries = options_raw
+
+    for option in entries or []:
+        if option.get("id") == epic_option_id:
+            return option.get("name") or option.get("title")
+    return None
+
+
+def _normalize_single_select_color(raw: Optional[str]) -> Optional[str]:
+    if raw is None:
+        return None
+    normalized = raw.strip().upper()
+    if not normalized:
+        return None
+    if normalized not in SINGLE_SELECT_ALLOWED_COLORS:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cor inválida. Utilize uma das cores suportadas pelo GitHub.",
+        )
+    return normalized
+
+
+async def _require_epic_field(db: AsyncSession, project: GithubProject) -> GithubProjectField:
+    field = await resolve_epic_field(db, project)
+    if not field:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Campo de épico não configurado")
+    if not project.project_node_id:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Projeto não possui node_id")
+    return field
+
+
+async def _refresh_epic_field_cache(
+    client: GithubGraphQLClient,
+    db: AsyncSession,
+    project: GithubProject,
+) -> None:
+    metadata = await fetch_project_metadata(client, project.owner_login, project.project_number)
+    await sync_project_fields(db, project, metadata.field_mappings)
+    await db.flush()
+
+
+async def _upsert_single_select_option(
+    client: GithubGraphQLClient,
+    project_node_id: str,
+    field_id: str,
+    name: str,
+    color: Optional[str],
+    option_id: Optional[str] = None,
+) -> dict[str, Any]:
+    mutation = """
+    mutation($input: UpdateProjectV2SingleSelectOptionInput!) {
+      updateProjectV2SingleSelectOption(input: $input) {
+        option: projectV2SingleSelectOption {
+          id
+          name
+          color
+        }
+      }
+    }
+    """
+    variables: dict[str, Any] = {
+        "input": {
+            "projectId": project_node_id,
+            "fieldId": field_id,
+            "name": name,
+        }
+    }
+    if option_id:
+        variables["input"]["optionId"] = option_id
+    if color:
+        variables["input"]["color"] = color
+
+    data = await client.execute(mutation, variables)
+    payload = data.get("updateProjectV2SingleSelectOption", {}) if isinstance(data, dict) else {}
+    option = payload.get("option") or payload.get("projectV2SingleSelectOption")
+    if not isinstance(option, dict) or not option.get("id"):
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="GitHub não retornou opção atualizada")
+    return option
+
+
+async def _delete_single_select_option(
+    client: GithubGraphQLClient,
+    project_node_id: str,
+    field_id: str,
+    option_id: str,
+) -> None:
+    mutation = """
+    mutation($input: DeleteProjectV2SingleSelectOptionInput!) {
+      deleteProjectV2SingleSelectOption(input: $input) {
+        deletedOptionId
+      }
+    }
+    """
+    variables = {
+        "input": {
+            "projectId": project_node_id,
+            "fieldId": field_id,
+            "optionId": option_id,
+        }
+    }
+    await client.execute(mutation, variables)
+
+
+async def create_epic_option(
+    db: AsyncSession,
+    account: Account,
+    project: GithubProject,
+    name: str,
+    color: Optional[str],
+) -> EpicOptionData:
+    epic_field = await _require_epic_field(db, project)
+    normalized_color = _normalize_single_select_color(color)
+    token = await get_github_token(db, account)
+
+    async with GithubGraphQLClient(token) as client:
+        option_raw = await _upsert_single_select_option(
+            client,
+            project.project_node_id,
+            epic_field.field_id,
+            name,
+            normalized_color,
+        )
+        await _refresh_epic_field_cache(client, db, project)
+
+    updated_field = await resolve_epic_field(db, project)
+    options = _extract_epic_options(updated_field)
+    for option in options:
+        if option.id == option_raw.get("id"):
+            return option
+    return EpicOptionData(
+        id=str(option_raw.get("id")),
+        name=str(option_raw.get("name") or name),
+        color=option_raw.get("color") if isinstance(option_raw.get("color"), str) else normalized_color,
+    )
+
+
+async def update_epic_option(
+    db: AsyncSession,
+    account: Account,
+    project: GithubProject,
+    option_id: str,
+    name: Optional[str],
+    color: Optional[str],
+) -> EpicOptionData:
+    if not name and color is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Informe ao menos um campo para atualizar")
+
+    epic_field = await _require_epic_field(db, project)
+    normalized_color = _normalize_single_select_color(color)
+    token = await get_github_token(db, account)
+
+    current_name = name
+    if not current_name:
+        existing_options = _extract_epic_options(epic_field)
+        for option in existing_options:
+            if option.id == option_id:
+                current_name = option.name
+                break
+        if not current_name:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Épico não encontrado")
+
+    async with GithubGraphQLClient(token) as client:
+        option_raw = await _upsert_single_select_option(
+            client,
+            project.project_node_id,
+            epic_field.field_id,
+            current_name,
+            normalized_color,
+            option_id=option_id,
+        )
+        await _refresh_epic_field_cache(client, db, project)
+
+    updated_field = await resolve_epic_field(db, project)
+    options = _extract_epic_options(updated_field)
+    for option in options:
+        if option.id == option_id:
+            return option
+    return EpicOptionData(
+        id=option_id,
+        name=str(option_raw.get("name") or current_name),
+        color=option_raw.get("color") if isinstance(option_raw.get("color"), str) else normalized_color,
+    )
+
+
+async def delete_epic_option(
+    db: AsyncSession,
+    account: Account,
+    project: GithubProject,
+    option_id: str,
+) -> None:
+    epic_field = await _require_epic_field(db, project)
+    token = await get_github_token(db, account)
+
+    async with GithubGraphQLClient(token) as client:
+        await _delete_single_select_option(
+            client,
+            project.project_node_id,
+            epic_field.field_id,
+            option_id,
+        )
+        await _refresh_epic_field_cache(client, db, project)
 
 
 async def apply_local_project_item_updates(
@@ -900,6 +1253,20 @@ async def apply_local_project_item_updates(
             item.iteration = None
             item.iteration_start = None
             item.iteration_end = None
+        has_changes = True
+
+    if "epic_option_id" in updates or "epic_name" in updates:
+        epic_field = await resolve_epic_field(db, project)
+        epic_option_id = updates.get("epic_option_id")
+        if epic_option_id:
+            resolved_name = updates.get("epic_name") or resolve_epic_option(epic_field, epic_option_id) or item.epic_name
+            item.epic_option_id = epic_option_id
+            item.epic_name = resolved_name
+        else:
+            # Allow clearing epic when option id is null or empty string
+            item.epic_option_id = None
+            explicit_name = updates.get("epic_name")
+            item.epic_name = explicit_name.strip() if isinstance(explicit_name, str) and explicit_name.strip() else None
         has_changes = True
 
     if has_changes:
@@ -1049,3 +1416,141 @@ def extract_status_columns(field_mappings: dict[str, Any]) -> list[str] | None:
     if "Done" not in unique:
         unique.append("Done")
     return unique
+
+
+async def create_epic_issue(
+    client: GithubGraphQLClient,
+    owner: str,
+    repository: str,
+    title: str,
+    description: Optional[str],
+    labels: list[str],
+    project_node_id: str,
+    epic_field_id: Optional[str],
+    epic_option_id: Optional[str],
+) -> dict[str, Any]:
+    """
+    Cria uma issue no GitHub, adiciona ao projeto e opcionalmente vincula ao campo Epic.
+
+    Returns dict with: issue_number, issue_url, issue_node_id, project_item_node_id
+    """
+    # Step 1: Get repository node_id
+    repo_query = """
+    query($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) {
+        id
+      }
+    }
+    """
+    repo_data = await client.execute(repo_query, {"owner": owner, "name": repository})
+    repo_node_id = repo_data.get("repository", {}).get("id")
+    if not repo_node_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Repositório {owner}/{repository} não encontrado")
+
+    # Step 2: Create issue
+    # Prefix title with "EPIC:" if not already present
+    epic_title = title if title.upper().startswith("EPIC:") else f"EPIC: {title}"
+
+    create_mutation = """
+    mutation($repositoryId: ID!, $title: String!, $body: String, $labelIds: [ID!]) {
+      createIssue(input: {repositoryId: $repositoryId, title: $title, body: $body, labelIds: $labelIds}) {
+        issue {
+          id
+          number
+          url
+        }
+      }
+    }
+    """
+
+    # Get label IDs if labels provided
+    label_ids = []
+    if labels:
+        labels_query = """
+        query($owner: String!, $name: String!, $first: Int!) {
+          repository(owner: $owner, name: $name) {
+            labels(first: $first) {
+              nodes {
+                id
+                name
+              }
+            }
+          }
+        }
+        """
+        labels_data = await client.execute(labels_query, {"owner": owner, "name": repository, "first": 100})
+        repo_labels = labels_data.get("repository", {}).get("labels", {}).get("nodes", [])
+        label_map = {lbl["name"]: lbl["id"] for lbl in repo_labels if lbl.get("name") and lbl.get("id")}
+        label_ids = [label_map[lbl] for lbl in labels if lbl in label_map]
+
+    create_variables = {
+        "repositoryId": repo_node_id,
+        "title": epic_title,
+        "body": description,
+        "labelIds": label_ids if label_ids else None,
+    }
+
+    create_data = await client.execute(create_mutation, create_variables)
+    issue = create_data.get("createIssue", {}).get("issue", {})
+    if not issue or not issue.get("id"):
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="Falha ao criar issue no GitHub")
+
+    issue_node_id = issue["id"]
+    issue_number = issue["number"]
+    issue_url = issue["url"]
+
+    # Step 3: Add issue to project
+    add_to_project_mutation = """
+    mutation($projectId: ID!, $contentId: ID!) {
+      addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
+        item {
+          id
+        }
+      }
+    }
+    """
+
+    add_variables = {
+        "projectId": project_node_id,
+        "contentId": issue_node_id,
+    }
+
+    add_data = await client.execute(add_to_project_mutation, add_variables)
+    project_item = add_data.get("addProjectV2ItemById", {}).get("item", {})
+    project_item_node_id = project_item.get("id")
+
+    if not project_item_node_id:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="Issue criada mas falhou ao adicionar ao projeto")
+
+    # Step 4: Set Epic field value if provided
+    if epic_field_id and epic_option_id:
+        set_field_mutation = """
+        mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: ProjectV2FieldValue!) {
+          updateProjectV2ItemFieldValue(input: {
+            projectId: $projectId,
+            itemId: $itemId,
+            fieldId: $fieldId,
+            value: $value
+          }) {
+            projectV2Item {
+              id
+            }
+          }
+        }
+        """
+
+        field_variables = {
+            "projectId": project_node_id,
+            "itemId": project_item_node_id,
+            "fieldId": epic_field_id,
+            "value": {"singleSelectOptionId": epic_option_id},
+        }
+
+        await client.execute(set_field_mutation, field_variables)
+
+    return {
+        "issue_number": issue_number,
+        "issue_url": issue_url,
+        "issue_node_id": issue_node_id,
+        "project_item_node_id": project_item_node_id,
+    }

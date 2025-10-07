@@ -19,4 +19,12 @@
 - `pytest` (dentro de `api/`) — executa testes do backend.
 - `ruff check api/` — lint do backend (após instalar `ruff`).
 
+## Observabilidade do roadmap
+- `GET /api/projects/current/iterations/dashboard` — retorna estatísticas por sprint (itens, status, estimativas, opções disponíveis).
+- `GET /api/projects/current/epics/dashboard` — retorna estatísticas por épico com contagens por status.
+- `GET /api/projects/current/epics/options` — lista as opções de épico disponíveis no Project.
+- `POST /api/projects/current/epics/options` — cria uma nova opção de épico no Project (owners/admins).
+- `PATCH /api/projects/current/epics/options/{option_id}` — renomeia ou altera a cor de um épico existente.
+- `DELETE /api/projects/current/epics/options/{option_id}` — remove uma opção de épico.
+
 > Documente novos comandos aqui sempre que scripts adicionais forem criados.

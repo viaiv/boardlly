@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Modal } from "@/components/ui/modal";
 import { apiFetch } from "@/lib/api";
 import { useSession } from "@/lib/session";
 
@@ -28,6 +29,28 @@ interface ProjectSummary {
   number: number;
   title?: string | null;
   updated_at?: string | null;
+}
+
+interface EpicDetail {
+  id: number;
+  item_node_id: string;
+  content_node_id: string | null;
+  epic_option_id: string | null;
+  epic_option_name: string | null;
+  title: string;
+  description: string | null;
+  url: string | null;
+  state: string | null;
+  author: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  labels: Array<{ name: string; color: string | null }>;
+  total_issues: number;
+  completed_issues: number;
+  progress_percentage: number;
+  total_estimate: number | null;
+  completed_estimate: number | null;
+  linked_issues: number[];
 }
 
 export function Settings() {
@@ -49,6 +72,17 @@ export function Settings() {
   const [statusInputs, setStatusInputs] = useState<string[]>([]);
   const [isSavingStatuses, setIsSavingStatuses] = useState(false);
   const [isLoadingProject, setIsLoadingProject] = useState(false);
+  const [epicModalOpen, setEpicModalOpen] = useState(false);
+  const [epicDetails, setEpicDetails] = useState<EpicDetail[]>([]);
+  const [epicLoading, setEpicLoading] = useState(false);
+  const [epicError, setEpicError] = useState<string | null>(null);
+  const [epicSuccess, setEpicSuccess] = useState<string | null>(null);
+  const [isCreatingEpic, setIsCreatingEpic] = useState(false);
+  const [newEpicTitle, setNewEpicTitle] = useState("");
+  const [newEpicDescription, setNewEpicDescription] = useState("");
+  const [newEpicRepository, setNewEpicRepository] = useState("");
+  const [newEpicCategory, setNewEpicCategory] = useState<string>("");
+  const [epicOptions, setEpicOptions] = useState<Array<{ id: string; name: string }>>([]);
 
   const canManageSettings = user?.role === "owner" || user?.role === "admin";
 
@@ -100,6 +134,40 @@ export function Settings() {
     const withoutDone = configured.filter((name) => name.toLowerCase() !== "done");
     setStatusInputs(withoutDone);
   }, [projectInfo]);
+
+  useEffect(() => {
+    if (!epicModalOpen) {
+      setEpicDetails([]);
+      setEpicOptions([]);
+      setEpicError(null);
+      setEpicSuccess(null);
+      setNewEpicTitle("");
+      setNewEpicDescription("");
+      setNewEpicRepository("");
+      setNewEpicCategory("");
+      return;
+    }
+
+    const loadEpics = async () => {
+      setEpicLoading(true);
+      setEpicError(null);
+      try {
+        const [details, options] = await Promise.all([
+          apiFetch<EpicDetail[]>("/api/projects/current/epics"),
+          apiFetch<Array<{ id: string; name: string }>>("/api/projects/current/epics/options"),
+        ]);
+        setEpicDetails(details.slice().sort((a, b) => a.title.localeCompare(b.title)));
+        setEpicOptions(options);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Falha ao carregar épicos";
+        setEpicError(message);
+      } finally {
+        setEpicLoading(false);
+      }
+    };
+
+    void loadEpics();
+  }, [epicModalOpen]);
 
   const handleTokenSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -204,6 +272,53 @@ export function Settings() {
 
   const handleAddStatus = () => {
     setStatusInputs((previous) => [...previous, ""]);
+  };
+
+  const handleOpenEpicManager = () => {
+    if (!projectInfo) {
+      setError("Conecte um projeto para visualizar épicos");
+      return;
+    }
+    setEpicModalOpen(true);
+  };
+
+  const handleCreateEpic = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!newEpicTitle.trim() || !newEpicRepository.trim()) {
+      setEpicError("Título e repositório são obrigatórios");
+      return;
+    }
+
+    setIsCreatingEpic(true);
+    setEpicError(null);
+    setEpicSuccess(null);
+
+    try {
+      const response = await apiFetch<{ issue_number: number; issue_url: string }>("/api/projects/current/epics", {
+        method: "POST",
+        body: JSON.stringify({
+          title: newEpicTitle.trim(),
+          description: newEpicDescription.trim() || null,
+          repository: newEpicRepository.trim(),
+          epic_option_id: newEpicCategory || null,
+        }),
+      });
+
+      setEpicSuccess(`Épico criado com sucesso! Issue #${response.issue_number}`);
+      setNewEpicTitle("");
+      setNewEpicDescription("");
+      setNewEpicRepository("");
+      setNewEpicCategory("");
+
+      // Reload epic list
+      const details = await apiFetch<EpicDetail[]>("/api/projects/current/epics");
+      setEpicDetails(details.slice().sort((a, b) => a.title.localeCompare(b.title)));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Falha ao criar épico";
+      setEpicError(message);
+    } finally {
+      setIsCreatingEpic(false);
+    }
   };
 
   const handleSaveStatuses = async () => {
@@ -453,8 +568,222 @@ export function Settings() {
               </p>
             </CardContent>
           </Card>
+
+          <Card className="lg:col-span-2">
+            <CardHeader>
+              <CardTitle>Épicos do Projeto</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Crie novos épicos ou visualize os existentes com descrição, progresso e métricas.
+              </p>
+              <Button onClick={handleOpenEpicManager}>
+                Gerenciar épicos
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       ) : null}
+
+      <Modal
+        open={epicModalOpen}
+        onClose={() => setEpicModalOpen(false)}
+        title="Gerenciar Épicos"
+        description="Crie novos épicos (issues) ou visualize os existentes com descrição completa, progresso e métricas."
+        size="lg"
+        footer={
+          <Button variant="outline" onClick={() => setEpicModalOpen(false)}>
+            Fechar
+          </Button>
+        }
+      >
+        <div className="space-y-4">
+          {epicError ? (
+            <p className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-600">{epicError}</p>
+          ) : null}
+          {epicSuccess ? (
+            <p className="rounded-md border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-700">
+              {epicSuccess}
+            </p>
+          ) : null}
+
+          {/* Create Epic Form */}
+          <form className="rounded-lg border border-border p-4 space-y-3" onSubmit={handleCreateEpic}>
+            <h3 className="text-sm font-semibold">Criar novo épico</h3>
+
+            <div className="space-y-2">
+              <Label htmlFor="epic-title">Título*</Label>
+              <Input
+                id="epic-title"
+                value={newEpicTitle}
+                onChange={(e) => setNewEpicTitle(e.target.value)}
+                placeholder="Sistema de Autenticação"
+                disabled={isCreatingEpic}
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="epic-description">Descrição</Label>
+              <textarea
+                id="epic-description"
+                value={newEpicDescription}
+                onChange={(e) => setNewEpicDescription(e.target.value)}
+                placeholder="Implementar sistema completo de autenticação com JWT..."
+                disabled={isCreatingEpic}
+                className="w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="epic-repository">Repositório*</Label>
+              <Input
+                id="epic-repository"
+                value={newEpicRepository}
+                onChange={(e) => setNewEpicRepository(e.target.value)}
+                placeholder="nome-do-repo"
+                disabled={isCreatingEpic}
+                required
+              />
+              <p className="text-xs text-muted-foreground">
+                Nome do repositório onde a issue será criada (em {projectInfo?.owner_login})
+              </p>
+            </div>
+
+            {epicOptions.length > 0 ? (
+              <div className="space-y-2">
+                <Label htmlFor="epic-category">Categoria (opcional)</Label>
+                <Select
+                  value={newEpicCategory}
+                  onValueChange={setNewEpicCategory}
+                  disabled={isCreatingEpic}
+                >
+                  <SelectTrigger id="epic-category">
+                    <SelectValue placeholder="Nenhuma categoria" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {epicOptions.map((option) => (
+                      <SelectItem key={option.id} value={option.id}>
+                        {option.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {newEpicCategory ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setNewEpicCategory("")}
+                    disabled={isCreatingEpic}
+                    className="text-xs"
+                  >
+                    Remover categoria
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+
+            <Button type="submit" disabled={isCreatingEpic} className="w-full">
+              {isCreatingEpic ? "Criando..." : "Criar épico"}
+            </Button>
+          </form>
+
+          {/* Epic List */}
+          {epicLoading ? (
+            <p className="text-sm text-muted-foreground">Carregando épicos...</p>
+          ) : epicDetails.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border p-8 text-center">
+              <p className="text-sm text-muted-foreground">
+                Nenhum épico encontrado ainda.
+              </p>
+            </div>
+          ) : (
+              <div className="space-y-3">
+                {epicDetails.map((epic) => (
+                  <div
+                    key={epic.id}
+                    className="rounded-lg border border-border bg-card p-4 space-y-3"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-start justify-between gap-2">
+                        <h4 className="text-sm font-semibold text-foreground">{epic.title}</h4>
+                        {epic.url ? (
+                          <a
+                            href={epic.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-blue-600 hover:underline"
+                          >
+                            Ver no GitHub →
+                          </a>
+                        ) : null}
+                      </div>
+                      {epic.description ? (
+                        <p className="text-xs text-muted-foreground line-clamp-2">{epic.description}</p>
+                      ) : null}
+                      {epic.epic_option_name ? (
+                        <p className="text-xs text-muted-foreground">
+                          Categoria: <span className="font-medium">{epic.epic_option_name}</span>
+                        </p>
+                      ) : null}
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground">Progresso</span>
+                        <span className="font-medium">{epic.progress_percentage.toFixed(0)}%</span>
+                      </div>
+                      <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                        <div
+                          className="h-full bg-emerald-500 transition-all"
+                          style={{ width: `${epic.progress_percentage}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Metrics */}
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div className="space-y-0.5">
+                        <p className="text-muted-foreground">Issues</p>
+                        <p className="font-medium">
+                          {epic.completed_issues} / {epic.total_issues} concluídas
+                        </p>
+                      </div>
+                      {epic.total_estimate !== null ? (
+                        <div className="space-y-0.5">
+                          <p className="text-muted-foreground">Estimativa</p>
+                          <p className="font-medium">
+                            {epic.completed_estimate?.toFixed(1) ?? 0} / {epic.total_estimate.toFixed(1)}
+                          </p>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {/* Labels */}
+                    {epic.labels.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {epic.labels.map((label, idx) => (
+                          <span
+                            key={`${epic.id}-label-${idx}`}
+                            className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
+                            style={{
+                              backgroundColor: label.color ? `#${label.color}20` : "#e5e7eb",
+                              color: label.color ? `#${label.color}` : "#6b7280",
+                            }}
+                          >
+                            {label.name}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }

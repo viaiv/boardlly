@@ -72,6 +72,8 @@ class ProjectItemUpdateRequest(BaseModel):
     iteration_id: str | None = None
     iteration_title: str | None = None
     status: str | None = None
+    epic_option_id: str | None = None
+    epic_name: str | None = None
     remote_updated_at: datetime | None = None
 
 
@@ -111,3 +113,107 @@ class ProjectItemDetailResponse(BaseModel):
     merged: bool | None = None
     author: ProjectItemAuthorResponse | None = None
     labels: list[ProjectItemLabelResponse] = Field(default_factory=list)
+
+
+class StatusBreakdownEntry(BaseModel):
+    status: str | None = None
+    count: int
+    total_estimate: float | None = None
+
+
+class IterationSummaryResponse(BaseModel):
+    iteration_id: str | None = None
+    name: str | None = None
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+    item_count: int
+    completed_count: int
+    total_estimate: float | None = None
+    completed_estimate: float | None = None
+    status_breakdown: list[StatusBreakdownEntry] = Field(default_factory=list)
+
+
+class IterationOptionResponse(BaseModel):
+    id: str
+    name: str
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+
+
+class IterationDashboardResponse(BaseModel):
+    summaries: list[IterationSummaryResponse] = Field(default_factory=list)
+    options: list[IterationOptionResponse] = Field(default_factory=list)
+
+
+class EpicSummaryResponse(BaseModel):
+    epic_option_id: str | None = None
+    name: str | None = None
+    item_count: int
+    completed_count: int
+    total_estimate: float | None = None
+    completed_estimate: float | None = None
+    status_breakdown: list[StatusBreakdownEntry] = Field(default_factory=list)
+
+
+class EpicOptionResponse(BaseModel):
+    id: str
+    name: str
+    color: str | None = None
+
+
+class EpicOptionCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    color: str | None = Field(default=None, max_length=50)
+
+
+class EpicOptionUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    color: str | None = Field(default=None, max_length=50)
+
+
+class EpicDashboardResponse(BaseModel):
+    summaries: list[EpicSummaryResponse] = Field(default_factory=list)
+    options: list[EpicOptionResponse] = Field(default_factory=list)
+
+
+class EpicDetailResponse(BaseModel):
+    """Épico completo com descrição, progresso e sub-issues"""
+    id: int
+    item_node_id: str
+    content_node_id: str | None = None
+    epic_option_id: str | None = None  # ID da opção no campo Epic
+    epic_option_name: str | None = None  # Nome da opção no campo Epic
+    title: str
+    description: str | None = None
+    url: str | None = None
+    state: str | None = None
+    author: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    labels: list[dict] = Field(default_factory=list)
+
+    # Métricas de progresso
+    total_issues: int = 0
+    completed_issues: int = 0
+    progress_percentage: float = 0.0
+    total_estimate: float | None = None
+    completed_estimate: float | None = None
+
+    # Sub-issues vinculadas
+    linked_issues: list[int] = Field(default_factory=list)  # IDs das issues vinculadas
+
+
+class EpicCreateRequest(BaseModel):
+    """Request para criar um novo épico (issue) no GitHub"""
+    title: str = Field(min_length=1, max_length=500)
+    description: str | None = Field(default=None, max_length=65536)
+    repository: str = Field(min_length=1, max_length=255)  # Nome do repositório (ex: "meu-repo")
+    epic_option_id: str | None = None  # ID da opção Epic para vincular
+    labels: list[str] = Field(default_factory=list)  # Labels opcionais
+
+
+class EpicCreateResponse(BaseModel):
+    """Response após criar épico"""
+    issue_number: int
+    issue_url: str
+    issue_node_id: str

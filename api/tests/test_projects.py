@@ -11,6 +11,7 @@ from app.models.github_project import GithubProject
 from app.models.project_item import ProjectItem
 from app.models.github_project_field import GithubProjectField
 from app.models.user import AppUser
+from app.services.github import EpicOptionData
 
 
 @pytest.mark.anyio
@@ -353,6 +354,242 @@ async def test_get_project_item_details(client: AsyncClient, session_factory, mo
     assert payload["author"]["login"] == "alice"
     assert payload["labels"][0]["name"] == "bug"
     assert payload["labels"][0]["color"] == "ff0000"
+
+
+@pytest.mark.anyio
+async def test_dashboard_endpoints_return_summaries(client: AsyncClient, session_factory):
+    await client.post(
+        "/api/auth/register",
+        json={"email": "owner@example.com", "password": "supersecret", "name": "Owner"},
+    )
+
+    await client.post(
+        "/api/accounts",
+        json={"name": "Equipe Tactyo"},
+    )
+
+    async with session_factory() as session:  # type: AsyncSession
+        user = (await session.execute(select(AppUser))).scalar_one()
+        account_id = await _get_account_id(session)
+        user.role = "owner"
+        user.account_id = account_id
+
+        project = GithubProject(
+            account_id=account_id,
+            owner_login="viaiv",
+            project_number=9,
+            project_node_id="PVT_DASH",
+            name="Roadmap",
+            status_columns=["Backlog", "In Review", "Done"],
+        )
+        session.add(project)
+        await session.flush()
+
+        session.add(
+            GithubProjectField(
+                project_id=project.id,
+                field_id="iteration-field",
+                field_name="Iteration",
+                field_type="ITERATION",
+                options={
+                    "iterations": [
+                        {
+                            "id": "it-1",
+                            "title": "Sprint Janeiro",
+                            "startDate": datetime(2025, 1, 1, tzinfo=timezone.utc).isoformat(),
+                            "duration": 14,
+                        }
+                    ]
+                },
+            )
+        )
+
+        session.add(
+            GithubProjectField(
+                project_id=project.id,
+                field_id="epic-field",
+                field_name="Epic",
+                field_type="SINGLE_SELECT",
+                options=[
+                    {"id": "epic-1", "name": "Plataforma"},
+                    {"id": "epic-2", "name": "Onboarding"},
+                ],
+            )
+        )
+
+        session.add_all(
+            [
+                ProjectItem(
+                    account_id=account_id,
+                    project_id=project.id,
+                    item_node_id="ITEM-1",
+                    content_type="Issue",
+                    title="Planejar API",
+                    status="Backlog",
+                    iteration="Sprint Janeiro",
+                    iteration_id="it-1",
+                    iteration_start=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                    iteration_end=datetime(2025, 1, 14, tzinfo=timezone.utc),
+                    estimate=3,
+                    epic_option_id="epic-1",
+                    epic_name="Plataforma",
+                ),
+                ProjectItem(
+                    account_id=account_id,
+                    project_id=project.id,
+                    item_node_id="ITEM-2",
+                    content_type="Issue",
+                    title="Implementar fluxo",
+                    status="Done",
+                    iteration="Sprint Janeiro",
+                    iteration_id="it-1",
+                    iteration_start=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                    iteration_end=datetime(2025, 1, 14, tzinfo=timezone.utc),
+                    estimate=5,
+                    epic_option_id="epic-1",
+                    epic_name="Plataforma",
+                ),
+                ProjectItem(
+                    account_id=account_id,
+                    project_id=project.id,
+                    item_node_id="ITEM-3",
+                    content_type="Issue",
+                    title="Revisar onboarding",
+                    status="In Review",
+                    estimate=2,
+                ),
+            ]
+        )
+
+        await session.commit()
+
+    iteration_response = await client.get("/api/projects/current/iterations/dashboard")
+    assert iteration_response.status_code == 200
+    iteration_data = iteration_response.json()
+
+    option_ids = {option["id"] for option in iteration_data["options"]}
+    assert "it-1" in option_ids
+
+    iteration_summaries = {summary["iteration_id"]: summary for summary in iteration_data["summaries"]}
+    assert iteration_summaries["it-1"]["item_count"] == 2
+    assert iteration_summaries["it-1"]["completed_count"] == 1
+    assert iteration_summaries["it-1"]["total_estimate"] == 8.0
+    done_entry = next(
+        entry for entry in iteration_summaries["it-1"]["status_breakdown"] if entry["status"] == "Done"
+    )
+    assert done_entry["count"] == 1
+
+    unassigned_iteration = iteration_summaries[None]
+    assert unassigned_iteration["item_count"] == 1
+
+    epic_response = await client.get("/api/projects/current/epics/dashboard")
+    assert epic_response.status_code == 200
+    epic_data = epic_response.json()
+
+    epic_option_ids = {option["id"] for option in epic_data["options"]}
+    assert {"epic-1", "epic-2"}.issubset(epic_option_ids)
+
+    epic_summaries = {summary["epic_option_id"]: summary for summary in epic_data["summaries"]}
+    plataforma_summary = epic_summaries["epic-1"]
+    assert plataforma_summary["item_count"] == 2
+    assert plataforma_summary["completed_count"] == 1
+
+    unassigned_epic = epic_summaries[None]
+    assert unassigned_epic["item_count"] == 1
+    assert any(entry["status"] == "In Review" for entry in unassigned_epic["status_breakdown"])
+
+
+@pytest.mark.anyio
+async def test_manage_epic_options_endpoints(client: AsyncClient, session_factory, monkeypatch):
+    await client.post(
+        "/api/auth/register",
+        json={"email": "owner@example.com", "password": "supersecret", "name": "Owner"},
+    )
+
+    await client.post(
+        "/api/accounts",
+        json={"name": "Equipe Tactyo"},
+    )
+
+    async with session_factory() as session:  # type: AsyncSession
+        user = (await session.execute(select(AppUser))).scalar_one()
+        account_id = await _get_account_id(session)
+        user.role = "owner"
+        user.account_id = account_id
+
+        project = GithubProject(
+            account_id=account_id,
+            owner_login="viaiv",
+            project_number=12,
+            project_node_id="PVT_EPIC",
+            name="Epics",
+        )
+        session.add(project)
+        await session.flush()
+        session.add(
+            GithubProjectField(
+                project_id=project.id,
+                field_id="epic-field",
+                field_name="Epic",
+                field_type="SINGLE_SELECT",
+                options=[
+                    {"id": "epic-1", "name": "Origem"},
+                ],
+            )
+        )
+        await session.commit()
+
+    created_calls: dict[str, tuple[str, str | None]] = {}
+
+    async def fake_create(db, account, project, name, color):
+        created_calls["args"] = (name, color)
+        return EpicOptionData(id="epic-new", name=name, color=(color or "BLUE"))
+
+    async def fake_update(db, account, project, option_id, name, color):
+        return EpicOptionData(id=option_id, name=name or "Atualizado", color=(color or "GREEN"))
+
+    async def fake_delete(db, account, project, option_id):
+        created_calls["deleted"] = option_id
+
+    async def fake_list(db, project):
+        return [
+            EpicOptionData(id="epic-1", name="Origem", color="BLUE"),
+            EpicOptionData(id="epic-new", name="Discovery", color="BLUE"),
+        ]
+
+    monkeypatch.setattr("app.services.github.create_epic_option", fake_create)
+    monkeypatch.setattr("app.services.github.update_epic_option", fake_update)
+    monkeypatch.setattr("app.services.github.delete_epic_option", fake_delete)
+    monkeypatch.setattr("app.services.github.list_epic_options", fake_list)
+
+    create_response = await client.post(
+        "/api/projects/current/epics/options",
+        json={"name": "Discovery", "color": "blue"},
+    )
+    assert create_response.status_code == 201
+    assert created_calls["args"] == ("Discovery", "blue")
+    payload = create_response.json()
+    assert payload["name"] == "Discovery"
+    assert payload["color"] == "BLUE"
+
+    update_response = await client.patch(
+        "/api/projects/current/epics/options/epic-new",
+        json={"name": "Delivery", "color": "green"},
+    )
+    assert update_response.status_code == 200
+    update_payload = update_response.json()
+    assert update_payload["id"] == "epic-new"
+    assert update_payload["name"] == "Delivery"
+    assert update_payload["color"] == "GREEN"
+
+    list_response = await client.get("/api/projects/current/epics/options")
+    assert list_response.status_code == 200
+    assert len(list_response.json()) == 2
+
+    delete_response = await client.delete("/api/projects/current/epics/options/epic-new")
+    assert delete_response.status_code == 204
+    assert created_calls["deleted"] == "epic-new"
+
 
 async def _get_account_id(session: AsyncSession):
     result = await session.execute(select(Account.id).limit(1))

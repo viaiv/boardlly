@@ -5,6 +5,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Modal } from "@/components/ui/modal";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   classifyProjectItem,
   classificationBadgeClass,
   formatDateDisplay,
@@ -19,6 +26,52 @@ export interface ProjectItemEditorValues {
   startDate: string | null;
   endDate: string | null;
   dueDate: string | null;
+  iterationId: string | null;
+  iterationTitle: string | null;
+  epicOptionId: string | null;
+  epicName: string | null;
+}
+
+interface IterationOption {
+  id: string;
+  name: string;
+  start_date?: string | null;
+  end_date?: string | null;
+}
+
+interface EpicOption {
+  id: string;
+  name: string;
+  color?: string | null;
+}
+
+const NONE_ITERATION_VALUE = "__no_iteration__";
+const NONE_EPIC_VALUE = "__no_epic__";
+
+function formatOptionDate(value?: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed.toLocaleDateString();
+}
+
+function formatOptionRange(start?: string | null, end?: string | null): string | null {
+  const startLabel = formatOptionDate(start);
+  const endLabel = formatOptionDate(end);
+  if (startLabel && endLabel) {
+    return `${startLabel} – ${endLabel}`;
+  }
+  if (startLabel) {
+    return `Início: ${startLabel}`;
+  }
+  if (endLabel) {
+    return `Entrega: ${endLabel}`;
+  }
+  return null;
 }
 
 interface ProjectItemEditorProps {
@@ -35,6 +88,8 @@ interface ProjectItemEditorProps {
   commentsLoading: boolean;
   commentsError: string | null;
   onRefresh?: () => void;
+  iterationOptions: IterationOption[];
+  epicOptions: EpicOption[];
 }
 
 export function ProjectItemEditor({
@@ -51,10 +106,14 @@ export function ProjectItemEditor({
   commentsLoading,
   commentsError,
   onRefresh,
+  iterationOptions,
+  epicOptions,
 }: ProjectItemEditorProps) {
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [dueDate, setDueDate] = useState<string>("");
+  const [iterationId, setIterationId] = useState<string>(NONE_ITERATION_VALUE);
+  const [epicOptionId, setEpicOptionId] = useState<string>(NONE_EPIC_VALUE);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -62,12 +121,16 @@ export function ProjectItemEditor({
       setStartDate("");
       setEndDate("");
       setDueDate("");
+      setIterationId(NONE_ITERATION_VALUE);
+      setEpicOptionId(NONE_EPIC_VALUE);
       setError(null);
       return;
     }
     setStartDate(formatDateForInput(item.start_date) ?? "");
     setEndDate(formatDateForInput(item.end_date) ?? "");
     setDueDate(formatDateForInput(item.due_date) ?? "");
+    setIterationId(item.iteration_id ?? NONE_ITERATION_VALUE);
+    setEpicOptionId(item.epic_option_id ?? NONE_EPIC_VALUE);
     setError(null);
   }, [item]);
 
@@ -117,11 +180,24 @@ export function ProjectItemEditor({
       onClose();
       return;
     }
+    const normalizedIterationId = iterationId === NONE_ITERATION_VALUE ? null : iterationId;
+    const normalizedEpicId = epicOptionId === NONE_EPIC_VALUE ? null : epicOptionId;
+    const selectedIteration = normalizedIterationId
+      ? iterationOptions.find((option) => option.id === normalizedIterationId)
+      : undefined;
+    const selectedEpic = normalizedEpicId
+      ? epicOptions.find((option) => option.id === normalizedEpicId)
+      : undefined;
     try {
       await onSubmit({
         startDate: startDate || null,
         endDate: endDate || null,
         dueDate: dueDate || null,
+        iterationId: normalizedIterationId,
+        iterationTitle:
+          selectedIteration?.name ?? (normalizedIterationId ? item?.iteration ?? null : null),
+        epicOptionId: normalizedEpicId,
+        epicName: selectedEpic?.name ?? (normalizedEpicId ? item?.epic_name ?? null : null),
       });
       onClose();
     } catch (err) {
@@ -259,6 +335,54 @@ export function ProjectItemEditor({
               ) : null}
             </div>
             {dueDisplay ? <p className="text-[11px] text-muted-foreground">Atual: {dueDisplay}</p> : null}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="iteration-select">Sprint (iteração)</Label>
+            <Select value={iterationId} onValueChange={setIterationId} disabled={!canEdit || submitting}>
+              <SelectTrigger id="iteration-select">
+                <SelectValue placeholder="Selecionar sprint" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE_ITERATION_VALUE}>Sem sprint</SelectItem>
+                {iterationOptions.map((option) => {
+                  const rangeLabel = formatOptionRange(option.start_date, option.end_date);
+                  return (
+                    <SelectItem key={option.id} value={option.id}>
+                      <div className="flex flex-col">
+                        <span className="text-sm font-medium">{option.name}</span>
+                        {rangeLabel ? (
+                          <span className="text-xs text-muted-foreground">{rangeLabel}</span>
+                        ) : null}
+                      </div>
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+            {item.iteration ? (
+              <p className="text-[11px] text-muted-foreground">Atual: {item.iteration}</p>
+            ) : null}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="epic-select">Épico</Label>
+            <Select value={epicOptionId} onValueChange={setEpicOptionId} disabled={!canEdit || submitting}>
+              <SelectTrigger id="epic-select">
+                <SelectValue placeholder="Selecionar épico" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE_EPIC_VALUE}>Sem épico</SelectItem>
+                {epicOptions.map((option) => (
+                  <SelectItem key={option.id} value={option.id}>
+                    {option.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {epicName ? (
+              <p className="text-[11px] text-muted-foreground">Atual: {epicName}</p>
+            ) : null}
           </div>
         </div>
 
