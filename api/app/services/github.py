@@ -665,7 +665,12 @@ async def upsert_github_project(
     account: Account,
     metadata: ProjectMetadata,
 ) -> GithubProject:
-    stmt = select(GithubProject).where(GithubProject.account_id == account.id)
+    # Buscar projeto específico por account_id + owner + number (constraint única)
+    stmt = select(GithubProject).where(
+        GithubProject.account_id == account.id,
+        GithubProject.owner_login == metadata.owner,
+        GithubProject.project_number == metadata.number
+    )
     existing = await db.execute(stmt)
     project = existing.scalar_one_or_none()
     if project:
