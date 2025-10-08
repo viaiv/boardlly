@@ -9,6 +9,7 @@ from app.models.github_project import GithubProject
 from app.models.user import AppUser
 from app.schemas.github import GithubProjectResponse
 from app.services.github import get_github_token, sync_github_project
+from app.services.scheduler import get_scheduler_status
 
 router = APIRouter(prefix="/github", tags=["github"])
 
@@ -30,3 +31,28 @@ async def sync_project(
     token = await get_github_token(db, account)
     count = await sync_github_project(db, account, project, token)
     return {"synced_items": count}
+
+
+@router.get("/scheduler/status")
+async def get_scheduler_info(
+    current_user: AppUser = Depends(deps.require_roles("owner", "admin")),
+) -> dict:
+    """
+    Retorna status do scheduler e jobs agendados.
+
+    **Permissão:** admin, owner
+
+    **Response:**
+    ```json
+    {
+      "running": true,
+      "jobs": [{
+        "id": "sync_all_projects",
+        "name": "Sincronização automática de projetos GitHub",
+        "next_run_time": "2025-10-07T23:30:00",
+        "trigger": "cron[minute='*/15']"
+      }]
+    }
+    ```
+    """
+    return get_scheduler_status()
