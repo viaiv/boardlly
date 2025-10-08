@@ -1,6 +1,8 @@
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") || "http://localhost:8000";
 
+const ACTIVE_PROJECT_KEY = "tactyo:active-project-id";
+
 type HttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
 export interface ApiRequestOptions extends RequestInit {
@@ -10,10 +12,19 @@ export interface ApiRequestOptions extends RequestInit {
 
 export async function apiFetch<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const { parseJson = true, headers, ...rest } = options;
+
+  // Ler projeto ativo do localStorage e incluir no header
+  const activeProjectId = localStorage.getItem(ACTIVE_PROJECT_KEY);
+  const projectHeaders: Record<string, string> = {};
+  if (activeProjectId) {
+    projectHeaders["X-Project-Id"] = activeProjectId;
+  }
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
+      ...projectHeaders,
       ...headers,
     },
     ...rest,

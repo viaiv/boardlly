@@ -5,6 +5,7 @@ import { BrowserRouter } from "react-router-dom";
 import "./index.css";
 import App from "./App";
 import { SessionProvider } from "@/lib/session";
+import { ProjectProvider } from "@/lib/project";
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
@@ -14,9 +15,11 @@ if (!rootElement) {
 createRoot(rootElement).render(
   <StrictMode>
     <SessionProvider>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
+      <ProjectProvider>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </ProjectProvider>
     </SessionProvider>
   </StrictMode>,
 );

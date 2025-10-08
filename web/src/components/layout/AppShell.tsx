@@ -12,6 +12,7 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { apiFetch } from "@/lib/api";
+import { ProjectSwitcher } from "@/components/project-switcher";
 
 const baseNavigation = [
   { to: "/", label: "Overview" },
@@ -60,6 +61,7 @@ export function AppShell({ headerActions }: { headerActions?: ReactNode }) {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-4">
+            <ProjectSwitcher />
             <nav className="flex flex-wrap items-center gap-2 text-sm">
               {navigation.map((item) => (
                 <NavLink

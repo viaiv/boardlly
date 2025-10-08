@@ -14,7 +14,8 @@ import {
 import { Modal } from "@/components/ui/modal";
 import { apiFetch } from "@/lib/api";
 import { useSession } from "@/lib/session";
-import { CheckCircle2, Circle, AlertCircle, Loader2 } from "lucide-react";
+import { useProject } from "@/lib/project";
+import { CheckCircle2, Circle, AlertCircle, Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 interface ProjectInfo {
@@ -57,6 +58,7 @@ interface EpicDetail {
 
 export function Settings() {
   const { user } = useSession();
+  const { projects: allProjects, refresh: refreshProjects, activeProject } = useProject();
   const [token, setToken] = useState("");
   const [tokenConfigured, setTokenConfigured] = useState(false);
   const [isEditingToken, setIsEditingToken] = useState(true);
@@ -402,6 +404,35 @@ export function Settings() {
       loadSetupStatus();
     }
   }, [projectInfo]);
+
+  const handleDeleteProject = async (projectId: number, projectName: string) => {
+    if (!confirm(`Tem certeza que deseja remover o projeto "${projectName}"? Todos os itens sincronizados serão removidos também.`)) {
+      return;
+    }
+
+    try {
+      await apiFetch(`/api/projects/${projectId}`, {
+        method: "DELETE",
+        parseJson: false,
+      });
+
+      toast.success("Projeto removido com sucesso");
+
+      // Atualizar lista de projetos
+      await refreshProjects();
+
+      // Se o projeto removido era o projeto atual, recarregar página
+      if (projectInfo?.id === projectId) {
+        setProjectInfo(null);
+        window.location.reload();
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Erro ao remover projeto";
+      toast.error("Erro ao remover projeto", {
+        description: message,
+      });
+    }
+  };
 
   if (!canManageSettings) {
     return (
@@ -919,6 +950,60 @@ export function Settings() {
           )}
         </div>
       </Modal>
+
+      {/* Project Management Section */}
+      {allProjects.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Gerenciar Projetos</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Lista de todos os projetos GitHub conectados. Use o seletor no header para alternar entre projetos.
+              </p>
+              <div className="space-y-2">
+                {allProjects.map((project) => (
+                  <div
+                    key={project.id}
+                    className="flex items-center justify-between rounded-lg border border-border p-3"
+                  >
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">
+                        {project.name || `${project.owner_login}/${project.project_number}`}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {project.owner_login} · Projeto #{project.project_number}
+                        {activeProject?.id === project.id ? " · Ativo" : ""}
+                      </p>
+                      {project.last_synced_at ? (
+                        <p className="text-xs text-muted-foreground">
+                          Último sync: {new Date(project.last_synced_at).toLocaleString()}
+                        </p>
+                      ) : null}
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDeleteProject(project.id, project.name || `${project.owner_login}/${project.project_number}`)}
+                      className="text-destructive hover:text-destructive"
+                      disabled={allProjects.length === 1}
+                      title={allProjects.length === 1 ? "Você deve manter pelo menos um projeto" : "Remover projeto"}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              {allProjects.length === 1 ? (
+                <p className="text-xs text-muted-foreground">
+                  Você deve manter pelo menos um projeto conectado. Adicione outro projeto antes de remover este.
+                </p>
+              ) : null}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   );
 }
