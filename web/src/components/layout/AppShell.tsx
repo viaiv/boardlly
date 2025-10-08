@@ -36,9 +36,12 @@ export function AppShell({ headerActions }: { headerActions?: ReactNode }) {
   }, []);
 
   const activeLabel = useMemo(() => {
-    // Check settings first (not in main navigation)
+    // Check settings and invites first (not in main navigation)
     if (location.pathname.startsWith("/settings")) {
       return "Configurações";
+    }
+    if (location.pathname.startsWith("/invites")) {
+      return "Convites";
     }
 
     const current = navigation.find((item) =>
@@ -88,6 +91,11 @@ export function AppShell({ headerActions }: { headerActions?: ReactNode }) {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem asChild>
+                  <NavLink to="/invites" className="cursor-pointer">
+                    Convites
+                  </NavLink>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
                   <NavLink to="/settings" className="cursor-pointer">
                     Configurações
                   </NavLink>
@@ -107,15 +115,6 @@ export function AppShell({ headerActions }: { headerActions?: ReactNode }) {
       </header>
 
       <main className="flex w-full flex-col gap-6 px-6 py-10">
-        <div className="flex flex-col gap-4 border-b pb-6 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Tactyo MVP
-            </p>
-            <h2 className="text-3xl font-semibold tracking-tight">{activeLabel}</h2>
-          </div>
-          {headerActions ? <div className="flex items-center gap-3">{headerActions}</div> : null}
-        </div>
         <section className="pb-10">
           <Outlet />
         </section>

@@ -32,7 +32,7 @@ export function AuthGuard({ redirectTo = "/login" }: AuthGuardProps) {
   }
 
   // Se o usuário está autenticado, passou pelo setup, mas não tem projeto ativo
-  // Redireciona para seleção de projeto (exceto se já está nessa página ou em settings)
+  // Redireciona para seleção de projeto (exceto se já está nessa página, em settings ou em invites)
   if (
     status === "authenticated" &&
     !user?.needsAccountSetup &&
@@ -40,7 +40,8 @@ export function AuthGuard({ redirectTo = "/login" }: AuthGuardProps) {
     !activeProject &&
     projects.length > 0 &&
     !location.pathname.startsWith("/project-selection") &&
-    !location.pathname.startsWith("/settings")
+    !location.pathname.startsWith("/settings") &&
+    !location.pathname.startsWith("/invites")
   ) {
     return <Navigate to="/project-selection" replace />;
   }

@@ -33,6 +33,19 @@ interface ProjectMember {
   updated_at: string;
 }
 
+interface ProjectInvite {
+  id: number;
+  project_id: number;
+  invited_user_id: string;
+  invited_user_email: string;
+  invited_user_name: string | null;
+  invited_by_email: string;
+  invited_by_name: string | null;
+  role: string;
+  status: string;
+  created_at: string;
+}
+
 interface User {
   id: string;
   email: string;
@@ -61,6 +74,7 @@ interface ProjectMembersProps {
 export function ProjectMembers({ projectId }: ProjectMembersProps) {
   const { user } = useSession();
   const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [invites, setInvites] = useState<ProjectInvite[]>([]);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -82,10 +96,14 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
         );
         setMembers(membersData);
 
-        // Fetch all account users if user can manage team
+        // Fetch pending invites if user can manage team
         if (canManageTeam) {
-          const usersData = await apiFetch<User[]>("/api/users");
+          const [usersData, invitesData] = await Promise.all([
+            apiFetch<User[]>("/api/users"),
+            apiFetch<ProjectInvite[]>(`/api/projects/${projectId}/invites`),
+          ]);
           setAllUsers(usersData);
+          setInvites(invitesData);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : "Não foi possível carregar o time";
@@ -103,8 +121,8 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
 
     setIsSubmitting(true);
     try {
-      const newMember = await apiFetch<ProjectMember>(
-        `/api/projects/${projectId}/members`,
+      await apiFetch(
+        `/api/projects/${projectId}/invites`,
         {
           method: "POST",
           body: JSON.stringify({
@@ -114,14 +132,13 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
         }
       );
 
-      setMembers([...members, newMember]);
       setIsAddDialogOpen(false);
       setSelectedUserId(null);
       setSelectedRole("viewer");
-      toast.success("Membro adicionado com sucesso");
+      toast.success("Convite enviado com sucesso");
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Erro ao adicionar membro";
-      toast.error("Erro ao adicionar membro", {
+      const message = err instanceof Error ? err.message : "Erro ao enviar convite";
+      toast.error("Erro ao enviar convite", {
         description: message,
       });
     } finally {
@@ -172,9 +189,31 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
     }
   };
 
-  // Get available users to add (exclude current members)
+  const handleCancelInvite = async (inviteId: number) => {
+    if (!confirm("Tem certeza que deseja cancelar este convite?")) {
+      return;
+    }
+
+    try {
+      await apiFetch(`/api/projects/${projectId}/invites/${inviteId}`, {
+        method: "DELETE",
+        parseJson: false,
+      });
+
+      setInvites(invites.filter((i) => i.id !== inviteId));
+      toast.success("Convite cancelado");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Erro ao cancelar convite";
+      toast.error("Erro ao cancelar convite", {
+        description: message,
+      });
+    }
+  };
+
+  // Get available users to add (exclude current members and pending invites)
   const memberUserIds = new Set(members.map((m) => m.user_id));
-  const availableUsers = allUsers.filter((u) => !memberUserIds.has(u.id));
+  const invitedUserIds = new Set(invites.map((i) => i.invited_user_id));
+  const availableUsers = allUsers.filter((u) => !memberUserIds.has(u.id) && !invitedUserIds.has(u.id));
 
   return (
     <div className="space-y-4">
@@ -187,7 +226,7 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
         {canManageTeam && availableUsers.length > 0 && (
           <Button onClick={() => setIsAddDialogOpen(true)} size="sm">
             <Plus className="mr-2 h-4 w-4" />
-            Adicionar Membro
+            Enviar Convite
           </Button>
         )}
       </div>
@@ -297,12 +336,69 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
         </table>
       </div>
 
+      {/* Pending Invites Section */}
+      {canManageTeam && invites.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-medium">Convites Pendentes</h3>
+          <div className="rounded-lg border border-border bg-card">
+            <table className="min-w-full divide-y divide-border">
+              <thead className="bg-muted/50 text-sm uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-3 text-left font-medium">Usuário Convidado</th>
+                  <th className="px-4 py-3 text-left font-medium">Permissão</th>
+                  <th className="px-4 py-3 text-left font-medium">Convidado por</th>
+                  <th className="px-4 py-3 text-left font-medium">Data</th>
+                  <th className="px-4 py-3 text-left font-medium">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border text-sm">
+                {invites.map((invite) => (
+                  <tr key={invite.id}>
+                    <td className="px-4 py-3">
+                      <div>
+                        <div className="font-medium">{invite.invited_user_name ?? "—"}</div>
+                        <div className="text-xs text-muted-foreground">{invite.invited_user_email}</div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="uppercase text-muted-foreground">
+                        {ROLE_LABELS[invite.role] || invite.role}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="text-xs">
+                        {invite.invited_by_name ?? invite.invited_by_email}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="text-xs text-muted-foreground">
+                        {new Date(invite.created_at).toLocaleDateString("pt-BR")}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleCancelInvite(invite.id)}
+                        className="text-destructive hover:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Adicionar Membro ao Projeto</DialogTitle>
+            <DialogTitle>Convidar Membro para o Projeto</DialogTitle>
             <DialogDescription>
-              Adicione um membro da conta ao projeto com permissões específicas.
+              Envie um convite para um membro da conta acessar o projeto com permissões específicas.
             </DialogDescription>
           </DialogHeader>
 
@@ -375,7 +471,7 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
               onClick={handleAddMember}
               disabled={!selectedUserId || isSubmitting}
             >
-              {isSubmitting ? "Adicionando..." : "Adicionar"}
+              {isSubmitting ? "Enviando..." : "Enviar Convite"}
             </Button>
           </DialogFooter>
         </DialogContent>
