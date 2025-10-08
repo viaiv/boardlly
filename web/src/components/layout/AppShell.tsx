@@ -1,5 +1,4 @@
 import { useMemo } from "react";
-import type { ReactNode } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import { cn } from "@/lib/utils";
@@ -22,7 +21,7 @@ const baseNavigation = [
   { to: "/backlog", label: "Backlog" },
 ];
 
-export function AppShell({ headerActions }: { headerActions?: ReactNode }) {
+export function AppShell() {
   const { user, refresh } = useSession();
   const location = useLocation();
 
@@ -34,21 +33,6 @@ export function AppShell({ headerActions }: { headerActions?: ReactNode }) {
   const navigation = useMemo(() => {
     return baseNavigation;
   }, []);
-
-  const activeLabel = useMemo(() => {
-    // Check settings and invites first (not in main navigation)
-    if (location.pathname.startsWith("/settings")) {
-      return "Configurações";
-    }
-    if (location.pathname.startsWith("/invites")) {
-      return "Convites";
-    }
-
-    const current = navigation.find((item) =>
-      item.to === "/" ? location.pathname === "/" : location.pathname.startsWith(item.to),
-    );
-    return current?.label ?? "Dashboard";
-  }, [location.pathname, navigation]);
 
   return (
     <div className="min-h-screen bg-background">

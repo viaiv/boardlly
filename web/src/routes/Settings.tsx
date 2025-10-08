@@ -109,7 +109,7 @@ export function Settings() {
     try {
       const ownerValue = owner.trim();
       const number = Number(projectNumber);
-      const data = await apiFetch<ProjectInfo>("/api/settings/github-project", {
+      await apiFetch<ProjectInfo>("/api/settings/github-project", {
         method: "POST",
         body: JSON.stringify({ owner: ownerValue, project_number: number }),
       });

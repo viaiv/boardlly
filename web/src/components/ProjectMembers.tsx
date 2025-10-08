@@ -45,13 +45,6 @@ interface ProjectInvite {
   created_at: string;
 }
 
-interface User {
-  id: string;
-  email: string;
-  name: string | null;
-  role: string;
-}
-
 const ROLE_LABELS: Record<string, string> = {
   viewer: "Visualizador",
   editor: "Editor",
