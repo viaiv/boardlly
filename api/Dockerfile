@@ -43,8 +43,15 @@ RUN mkdir -p /app/data
 EXPOSE 8000
 
 # Variáveis de ambiente padrão (podem ser sobrescritas no EasyPanel)
+# IMPORTANTE: A TACTYO_ENCRYPTION_KEY abaixo é apenas para desenvolvimento!
+# SEMPRE sobrescreva em produção com uma chave gerada pelo scripts/generate_secrets.py
+#
+# NOTA: Não defina TACTYO_CORS_ORIGINS como string vazia!
+# - Para usar padrão: não defina a variável
+# - Para customizar: defina como "http://site1.com,http://site2.com"
 ENV TACTYO_DEBUG=false \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    TACTYO_ENCRYPTION_KEY=2uQEO8aR7fqVeHQUgZgPCeNj4dAgZsu_VGsSQBeQnoo=
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
