@@ -37,6 +37,9 @@ class GithubProject(Base):
     fields = relationship(
         "GithubProjectField", back_populates="project", cascade="all, delete-orphan"
     )
+    epic_options = relationship(
+        "EpicOption", back_populates="project", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         UniqueConstraint(

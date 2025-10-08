@@ -52,6 +52,9 @@ class ProjectItemPayload:
     field_values: Dict[str, Any]
     epic_option_id: Optional[str]
     epic_name: Optional[str]
+    # Campos hierárquicos
+    labels: Optional[List[str]] = None
+    relationship_ids: Optional[List[str]] = None  # IDs dos items relacionados (pai/filhos)
 
 
 @dataclass
@@ -318,8 +321,22 @@ async def fetch_project_items(client: GithubGraphQLClient, project_node_id: str)
               updatedAt
               content {
                 __typename
-                ... on Issue { id title url updatedAt assignees(first: 20) { nodes { login } } }
-                ... on PullRequest { id title url updatedAt assignees(first: 20) { nodes { login } } }
+                ... on Issue {
+                  id
+                  title
+                  url
+                  updatedAt
+                  assignees(first: 20) { nodes { login } }
+                  labels(first: 20) { nodes { name } }
+                }
+                ... on PullRequest {
+                  id
+                  title
+                  url
+                  updatedAt
+                  assignees(first: 20) { nodes { login } }
+                  labels(first: 20) { nodes { name } }
+                }
                 ... on DraftIssue { id title }
               }
               fieldValues(first: 50) {
@@ -335,6 +352,30 @@ async def fetch_project_items(client: GithubGraphQLClient, project_node_id: str)
                     iterationId
                     startDate
                     duration
+                  }
+                  ... on ProjectV2ItemFieldRepositoryValue {
+                    field { ... on ProjectV2FieldCommon { name } }
+                    repository { id name }
+                  }
+                  ... on ProjectV2ItemFieldPullRequestValue {
+                    field { ... on ProjectV2FieldCommon { name } }
+                    pullRequests(first: 20) { nodes { id } }
+                  }
+                  ... on ProjectV2ItemFieldReviewerValue {
+                    field { ... on ProjectV2FieldCommon { name } }
+                    reviewers(first: 20) { nodes { __typename } }
+                  }
+                  ... on ProjectV2ItemFieldMilestoneValue {
+                    field { ... on ProjectV2FieldCommon { name } }
+                    milestone { id title }
+                  }
+                  ... on ProjectV2ItemFieldLabelValue {
+                    field { ... on ProjectV2FieldCommon { name } }
+                    labels(first: 20) { nodes { id name } }
+                  }
+                  ... on ProjectV2ItemFieldUserValue {
+                    field { ... on ProjectV2FieldCommon { name } }
+                    users(first: 20) { nodes { login } }
                   }
                 }
               }
@@ -358,6 +399,8 @@ async def fetch_project_items(client: GithubGraphQLClient, project_node_id: str)
             field_nodes = element.get("fieldValues", {}).get("nodes", [])
             field_values, field_details = parse_field_details(field_nodes)
             assignees = extract_assignees(content)
+            labels = extract_labels(content)
+            relationship_ids = extract_relationships(field_nodes)
             project_item_updated = parse_datetime(element.get("updatedAt"))
             content_updated = parse_datetime(content.get("updatedAt"))
             items.append(
@@ -382,6 +425,8 @@ async def fetch_project_items(client: GithubGraphQLClient, project_node_id: str)
                     field_values=field_values,
                     epic_option_id=field_details.epic_option_id,
                     epic_name=field_details.epic_value or field_values.get("Epic"),
+                    labels=labels,
+                    relationship_ids=relationship_ids,
                 )
             )
         page_info = items_data.get("pageInfo", {})
@@ -644,6 +689,39 @@ def extract_assignees(content: dict[str, Any]) -> List[str]:
     return [node.get("login") for node in assignees if node.get("login")]
 
 
+def extract_labels(content: dict[str, Any]) -> List[str]:
+    """Extract label names from Issue/PR content."""
+    labels = content.get("labels", {}).get("nodes") if content else None
+    if not labels:
+        return []
+    return [node.get("name") for node in labels if node.get("name")]
+
+
+def extract_relationships(field_nodes: List[dict[str, Any]]) -> List[str]:
+    """
+    Extract related item IDs from ProjectV2ItemFieldLabelValue fields.
+
+    The Relationships field in GitHub Projects V2 uses a special field type
+    that contains references to other project items.
+    """
+    relationship_ids = []
+    for node in field_nodes:
+        field = node.get("field", {})
+        field_name = field.get("name", "")
+
+        # Check if this is a Relationships field
+        if field_name.lower() in ("relationships", "related", "parent", "children"):
+            # The exact structure depends on GitHub's API
+            # For now, we'll look for item IDs in various possible structures
+            if node.get("__typename") == "ProjectV2ItemFieldLabelValue":
+                labels_data = node.get("labels", {}).get("nodes", [])
+                for label in labels_data:
+                    if label_id := label.get("id"):
+                        relationship_ids.append(label_id)
+
+    return relationship_ids
+
+
 def parse_datetime(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
@@ -705,8 +783,13 @@ async def upsert_project_items(
     project: GithubProject,
     items: List[ProjectItemPayload],
 ) -> int:
+    from app.utils.hierarchy import derive_item_type_from_labels
+
     count = 0
     for payload in items:
+        # Derive item_type from labels
+        item_type = derive_item_type_from_labels(payload.labels, payload.title)
+
         stmt = select(ProjectItem).where(ProjectItem.item_node_id == payload.node_id)
         result = await db.execute(stmt)
         item = result.scalar_one_or_none()
@@ -728,6 +811,8 @@ async def upsert_project_items(
             item.field_values = payload.field_values
             item.epic_option_id = payload.epic_option_id
             item.epic_name = payload.epic_name
+            item.labels = payload.labels
+            item.item_type = item_type
             item.updated_at = payload.updated_at
             item.last_synced_at = datetime.now(timezone.utc)
             item.remote_updated_at = payload.remote_updated_at
@@ -753,6 +838,8 @@ async def upsert_project_items(
                 field_values=payload.field_values,
                 epic_option_id=payload.epic_option_id,
                 epic_name=payload.epic_name,
+                labels=payload.labels,
+                item_type=item_type,
                 updated_at=payload.updated_at,
                 remote_updated_at=payload.remote_updated_at,
                 last_synced_at=datetime.now(timezone.utc),

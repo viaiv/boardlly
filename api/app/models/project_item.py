@@ -40,6 +40,14 @@ class ProjectItem(Base):
     field_values: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     epic_option_id: Mapped[str | None] = mapped_column(String(length=255), nullable=True)
     epic_name: Mapped[str | None] = mapped_column(String(length=255), nullable=True)
+
+    # Campos hierárquicos (épico > história > tarefa)
+    item_type: Mapped[str | None] = mapped_column(String(length=50), nullable=True)  # story, task, feature, bug
+    parent_item_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("project_item.id", ondelete="SET NULL"), nullable=True
+    )
+    labels: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
+
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     remote_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -51,6 +59,10 @@ class ProjectItem(Base):
     account = relationship("Account")
     project = relationship("GithubProject", back_populates="items")
     last_editor = relationship("AppUser", foreign_keys=[last_local_edit_by])
+
+    # Relacionamentos hierárquicos
+    parent = relationship("ProjectItem", remote_side=[id], foreign_keys=[parent_item_id], back_populates="children")
+    children = relationship("ProjectItem", back_populates="parent", foreign_keys=[parent_item_id])
 
     __table_args__ = (
         {

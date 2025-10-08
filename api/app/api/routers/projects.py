@@ -48,6 +48,11 @@ from app.schemas.project_invite import (
     ProjectInviteCreateRequest,
     ProjectInviteListResponse,
 )
+from app.schemas.hierarchy import (
+    HierarchyResponse,
+    HierarchyEpicResponse,
+    HierarchyItemResponse,
+)
 from app.services.github import (
     GithubGraphQLClient,
     apply_local_project_item_updates,
@@ -1792,3 +1797,110 @@ async def cancel_project_invite(
     await db.commit()
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{project_id}/hierarchy", response_model=HierarchyResponse)
+async def get_project_hierarchy(
+    project_id: int,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: AppUser = Depends(deps.get_current_user),
+) -> HierarchyResponse:
+    """
+    Retorna a hierarquia completa do projeto (épicos > histórias > tarefas).
+
+    Organiza os itens em uma estrutura hierárquica baseada em:
+    - Épicos (campo Epic do projeto)
+    - Relacionamentos pai-filho (campo parent_item_id)
+    - Tipo de item (item_type derivado de labels)
+
+    Retorna items agrupados por épico, com estrutura aninhada de histórias e tarefas.
+    """
+    account = await _get_account_or_404(db, current_user)
+    project = await _get_project_or_404(db, account, project_id)
+
+    # Load all project items
+    stmt = (
+        select(ProjectItem)
+        .where(ProjectItem.project_id == project.id)
+        .order_by(ProjectItem.title)
+    )
+    result = await db.execute(stmt)
+    all_items = result.scalars().all()
+
+    # Build item lookup map
+    items_by_id = {item.id: item for item in all_items}
+
+    # Helper function to build item tree recursively
+    def build_item_response(item: ProjectItem, visited: set[int]) -> HierarchyItemResponse:
+        """Build hierarchical item response with children."""
+        if item.id in visited:
+            # Prevent circular references
+            return HierarchyItemResponse(
+                id=item.id,
+                item_node_id=item.item_node_id,
+                title=item.title,
+                item_type=item.item_type,
+                status=item.status,
+                epic_name=item.epic_name,
+                parent_item_id=item.parent_item_id,
+                labels=item.labels,
+                children=[]
+            )
+
+        visited.add(item.id)
+
+        # Find children
+        children = [
+            build_item_response(child, visited)
+            for child in all_items
+            if child.parent_item_id == item.id
+        ]
+
+        return HierarchyItemResponse(
+            id=item.id,
+            item_node_id=item.item_node_id,
+            title=item.title,
+            item_type=item.item_type,
+            status=item.status,
+            epic_name=item.epic_name,
+            parent_item_id=item.parent_item_id,
+            labels=item.labels,
+            children=children
+        )
+
+    # Group items by epic
+    epics_map: dict[str | None, list[ProjectItem]] = defaultdict(list)
+    root_items = []  # Items with no parent
+
+    for item in all_items:
+        if item.parent_item_id is None:
+            root_items.append(item)
+
+    # Group root items by epic
+    for item in root_items:
+        epic_key = item.epic_option_id or item.epic_name
+        epics_map[epic_key].append(item)
+
+    # Build response
+    epics = []
+    orphans = []
+
+    for epic_key, items in epics_map.items():
+        visited: set[int] = set()
+        items_tree = [build_item_response(item, visited) for item in items]
+
+        if epic_key is None:
+            # Items without epic
+            orphans.extend(items_tree)
+        else:
+            # Items with epic
+            epic_name = items[0].epic_name if items else None
+            epics.append(
+                HierarchyEpicResponse(
+                    epic_option_id=epic_key,
+                    epic_name=epic_name,
+                    items=items_tree
+                )
+            )
+
+    return HierarchyResponse(epics=epics, orphans=orphans)

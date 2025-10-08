@@ -28,6 +28,8 @@ import {
   type ProjectItemComment,
   type ProjectItemDetails,
 } from "@/lib/project-items";
+import { HierarchyView } from "@/components/hierarchy-view";
+import { getProjectHierarchy, type HierarchyResponse } from "@/lib/hierarchy";
 
 interface ProjectInfo {
   id: number;
@@ -194,6 +196,9 @@ export function Roadmap() {
   const [editorComments, setEditorComments] = useState<ProjectItemComment[]>([]);
   const [editorCommentsLoading, setEditorCommentsLoading] = useState(false);
   const [editorCommentsError, setEditorCommentsError] = useState<string | null>(null);
+  const [hierarchy, setHierarchy] = useState<HierarchyResponse | null>(null);
+  const [hierarchyLoading, setHierarchyLoading] = useState(false);
+  const [hierarchyViewMode, setHierarchyViewMode] = useState<"list" | "flow">("list");
 
   const fetchDashboards = useCallback(async () => {
     setDashboardsLoading(true);
@@ -210,6 +215,19 @@ export function Roadmap() {
       setDashboardsError(message);
     } finally {
       setDashboardsLoading(false);
+    }
+  }, []);
+
+  const fetchHierarchy = useCallback(async () => {
+    setHierarchyLoading(true);
+    try {
+      const data = await getProjectHierarchy();
+      setHierarchy(data);
+    } catch (err) {
+      console.error("Erro ao carregar hierarquia:", err);
+      setHierarchy(null);
+    } finally {
+      setHierarchyLoading(false);
     }
   }, []);
 
@@ -234,6 +252,10 @@ export function Roadmap() {
 
     void load();
   }, [fetchDashboards]);
+
+  useEffect(() => {
+    void fetchHierarchy();
+  }, [fetchHierarchy]);
 
   const getErrorMessage = (err: unknown, fallback: string): string =>
     err instanceof Error ? err.message : fallback;
@@ -1244,6 +1266,46 @@ export function Roadmap() {
           ) : null}
         </div>
       )}
+
+      {/* Hierarquia de Épicos e Histórias */}
+      <div className="space-y-4 mt-12 pt-12 border-t">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-semibold tracking-tight">Hierarquia de Épicos e Histórias</h2>
+            <p className="text-sm text-muted-foreground">
+              Visualize a organização épico → história → tarefa
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant={hierarchyViewMode === "list" ? "default" : "outline"}
+              onClick={() => setHierarchyViewMode("list")}
+              size="sm"
+            >
+              Lista
+            </Button>
+            <Button
+              variant={hierarchyViewMode === "flow" ? "default" : "outline"}
+              onClick={() => setHierarchyViewMode("flow")}
+              size="sm"
+            >
+              Diagrama
+            </Button>
+          </div>
+        </div>
+
+        {hierarchyLoading ? (
+          <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+            Carregando hierarquia...
+          </div>
+        ) : (
+          <HierarchyView
+            hierarchy={hierarchy}
+            viewMode={hierarchyViewMode}
+            onItemClick={handleCardClick}
+          />
+        )}
+      </div>
 
       <ProjectItemEditor
         item={editorItem}

@@ -17,6 +17,7 @@ const baseNavigation = [
   { to: "/", label: "Overview" },
   { to: "/roadmap", label: "Roadmap" },
   { to: "/sprints", label: "Sprints" },
+  { to: "/epics", label: "Épicos" },
   { to: "/requests", label: "Solicitações" },
   { to: "/backlog", label: "Backlog" },
 ];
