@@ -16,6 +16,7 @@ from app.models.project_item import ProjectItem
 from app.models.project_member import ProjectMember
 from app.models.project_invite import ProjectInvite
 from app.models.user import AppUser
+from app.services.email import send_project_invite_email
 from app.schemas.github import (
     GithubProjectResponse,
     EpicDashboardResponse,
@@ -1447,32 +1448,66 @@ async def create_project_invite(
             detail="Usuário com este email já é membro deste projeto"
         )
 
-    # Check if there's already a pending invite for this email
+    # Check if there's already an invite for this email (any status)
     stmt = select(ProjectInvite).where(
         ProjectInvite.invited_email == invited_email,
-        ProjectInvite.project_id == project.id,
-        ProjectInvite.status == "pending"
+        ProjectInvite.project_id == project.id
     )
     result = await db.execute(stmt)
     existing_invite = result.scalar_one_or_none()
 
     if existing_invite:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail="Já existe um convite pendente para este email"
+        if existing_invite.status == "pending":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail="Já existe um convite pendente para este email"
+            )
+        elif existing_invite.status == "accepted":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail="Este usuário já aceitou um convite anteriormente"
+            )
+        elif existing_invite.status in ("rejected", "cancelled"):
+            # Reativar convite rejeitado ou cancelado
+            existing_invite.status = "pending"
+            existing_invite.role = payload.role
+            existing_invite.invited_by_user_id = current_user.id
+            await db.commit()
+            await db.refresh(existing_invite)
+            new_invite = existing_invite
+        else:
+            # Status desconhecido - não deveria acontecer, mas reativa por segurança
+            existing_invite.status = "pending"
+            existing_invite.role = payload.role
+            existing_invite.invited_by_user_id = current_user.id
+            await db.commit()
+            await db.refresh(existing_invite)
+            new_invite = existing_invite
+    else:
+        # Create new invite
+        new_invite = ProjectInvite(
+            project_id=project.id,
+            invited_email=invited_email,
+            invited_by_user_id=current_user.id,
+            role=payload.role,
+            status="pending"
         )
+        db.add(new_invite)
+        await db.commit()
+        await db.refresh(new_invite)
 
-    # Create new invite
-    new_invite = ProjectInvite(
-        project_id=project.id,
-        invited_email=invited_email,
-        invited_by_user_id=current_user.id,
-        role=payload.role,
-        status="pending"
-    )
-    db.add(new_invite)
-    await db.commit()
-    await db.refresh(new_invite)
+    # Send invitation email
+    try:
+        await send_project_invite_email(
+            to_email=invited_email,
+            inviter_name=current_user.name or current_user.email,
+            project_name=project.name or f"{project.owner_login}/{project.project_number}",
+            role=payload.role,
+        )
+    except Exception as e:
+        # Log error but don't fail the request
+        # The invite was created successfully, email is just a notification
+        print(f"⚠️  Falha ao enviar email de convite: {e}")
 
     return ProjectInviteResponse(
         id=new_invite.id,
