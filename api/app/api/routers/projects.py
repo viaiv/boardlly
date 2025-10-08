@@ -13,6 +13,7 @@ from app.models.account import Account
 from app.models.github_project import GithubProject
 from app.models.github_project_field import GithubProjectField
 from app.models.project_item import ProjectItem
+from app.models.project_member import ProjectMember
 from app.models.user import AppUser
 from app.schemas.github import (
     GithubProjectResponse,
@@ -34,6 +35,11 @@ from app.schemas.github import (
     ProjectItemResponse,
     ProjectItemUpdateRequest,
     StatusBreakdownEntry,
+)
+from app.schemas.project_member import (
+    ProjectMemberResponse,
+    ProjectMemberCreateRequest,
+    ProjectMemberUpdateRequest,
 )
 from app.services.github import (
     GithubGraphQLClient,
@@ -1060,4 +1066,234 @@ async def delete_epic_option_endpoint(
     account = await _get_account_or_404(db, current_user)
     project = await _get_project_or_404(db, account, x_project_id)
     await delete_epic_option(db, account, project, option_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ============================================================================
+# Project Members Management
+# ============================================================================
+
+
+@router.get("/{project_id}/members", response_model=list[ProjectMemberResponse])
+async def list_project_members(
+    project_id: int,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: AppUser = Depends(deps.get_current_user),
+) -> list[ProjectMemberResponse]:
+    """
+    Lista todos os membros de um projeto.
+
+    Retorna informações de cada membro incluindo role e dados do usuário.
+    """
+    account = await _get_account_or_404(db, current_user)
+    project = await _get_project_or_404(db, account, project_id)
+
+    # Query project members with user information joined
+    stmt = (
+        select(ProjectMember, AppUser)
+        .join(AppUser, ProjectMember.user_id == AppUser.id)
+        .where(ProjectMember.project_id == project.id)
+        .order_by(ProjectMember.created_at.asc())
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    members = []
+    for member, user in rows:
+        members.append(
+            ProjectMemberResponse(
+                id=member.id,
+                user_id=member.user_id,
+                project_id=member.project_id,
+                role=member.role,
+                created_at=member.created_at,
+                updated_at=member.updated_at,
+                user_email=user.email,
+                user_name=user.name,
+            )
+        )
+
+    return members
+
+
+@router.post("/{project_id}/members", response_model=ProjectMemberResponse, status_code=status.HTTP_201_CREATED)
+async def add_project_member(
+    project_id: int,
+    payload: ProjectMemberCreateRequest,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: AppUser = Depends(deps.require_roles("owner", "admin")),
+) -> ProjectMemberResponse:
+    """
+    Adiciona um membro ao projeto com um role específico.
+
+    **Permissão:** owner, admin
+
+    **Roles disponíveis:**
+    - viewer: Apenas visualização
+    - editor: Pode editar itens
+    - pm: Project Manager, pode gerenciar sprints e épicos
+    - admin: Administrador do projeto
+    """
+    account = await _get_account_or_404(db, current_user)
+    project = await _get_project_or_404(db, account, project_id)
+
+    # Validate role
+    valid_roles = ["viewer", "editor", "pm", "admin"]
+    if payload.role not in valid_roles:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Role inválido. Use um dos seguintes: {', '.join(valid_roles)}"
+        )
+
+    # Check if user exists and belongs to same account
+    user = await db.get(AppUser, payload.user_id)
+    if not user or user.account_id != account.id:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail="Usuário não encontrado ou não pertence à mesma conta"
+        )
+
+    # Check if user is already a member
+    stmt = select(ProjectMember).where(
+        ProjectMember.user_id == payload.user_id,
+        ProjectMember.project_id == project.id
+    )
+    result = await db.execute(stmt)
+    existing_member = result.scalar_one_or_none()
+
+    if existing_member:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Usuário já é membro deste projeto"
+        )
+
+    # Create new project member
+    new_member = ProjectMember(
+        user_id=payload.user_id,
+        project_id=project.id,
+        role=payload.role
+    )
+    db.add(new_member)
+    await db.commit()
+    await db.refresh(new_member)
+
+    return ProjectMemberResponse(
+        id=new_member.id,
+        user_id=new_member.user_id,
+        project_id=new_member.project_id,
+        role=new_member.role,
+        created_at=new_member.created_at,
+        updated_at=new_member.updated_at,
+        user_email=user.email,
+        user_name=user.name,
+    )
+
+
+@router.patch("/{project_id}/members/{user_id}", response_model=ProjectMemberResponse)
+async def update_project_member(
+    project_id: int,
+    user_id: str,
+    payload: ProjectMemberUpdateRequest,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: AppUser = Depends(deps.require_roles("owner", "admin")),
+) -> ProjectMemberResponse:
+    """
+    Atualiza o role de um membro do projeto.
+
+    **Permissão:** owner, admin
+    """
+    from uuid import UUID
+
+    account = await _get_account_or_404(db, current_user)
+    project = await _get_project_or_404(db, account, project_id)
+
+    # Validate role
+    valid_roles = ["viewer", "editor", "pm", "admin"]
+    if payload.role not in valid_roles:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Role inválido. Use um dos seguintes: {', '.join(valid_roles)}"
+        )
+
+    # Convert user_id string to UUID
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="ID de usuário inválido")
+
+    # Find project member
+    stmt = select(ProjectMember, AppUser).join(
+        AppUser, ProjectMember.user_id == AppUser.id
+    ).where(
+        ProjectMember.user_id == user_uuid,
+        ProjectMember.project_id == project.id
+    )
+    result = await db.execute(stmt)
+    row = result.first()
+
+    if not row:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail="Membro não encontrado neste projeto"
+        )
+
+    member, user = row
+
+    # Update role
+    member.role = payload.role
+    await db.commit()
+    await db.refresh(member)
+
+    return ProjectMemberResponse(
+        id=member.id,
+        user_id=member.user_id,
+        project_id=member.project_id,
+        role=member.role,
+        created_at=member.created_at,
+        updated_at=member.updated_at,
+        user_email=user.email,
+        user_name=user.name,
+    )
+
+
+@router.delete("/{project_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_project_member(
+    project_id: int,
+    user_id: str,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: AppUser = Depends(deps.require_roles("owner", "admin")),
+) -> Response:
+    """
+    Remove um membro do projeto.
+
+    **Permissão:** owner, admin
+    """
+    from uuid import UUID
+
+    account = await _get_account_or_404(db, current_user)
+    project = await _get_project_or_404(db, account, project_id)
+
+    # Convert user_id string to UUID
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="ID de usuário inválido")
+
+    # Find and delete project member
+    stmt = select(ProjectMember).where(
+        ProjectMember.user_id == user_uuid,
+        ProjectMember.project_id == project.id
+    )
+    result = await db.execute(stmt)
+    member = result.scalar_one_or_none()
+
+    if not member:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail="Membro não encontrado neste projeto"
+        )
+
+    await db.delete(member)
+    await db.commit()
+
     return Response(status_code=status.HTTP_204_NO_CONTENT)

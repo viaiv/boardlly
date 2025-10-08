@@ -3,7 +3,6 @@ import { Plus, Trash2 } from "lucide-react";
 
 import { apiFetch } from "@/lib/api";
 import { useSession } from "@/lib/session";
-import { useProject } from "@/lib/project";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -46,7 +45,6 @@ const ROLE_LABELS: Record<string, string> = {
   editor: "Editor",
   pm: "Gerente de Projeto",
   admin: "Administrador",
-  owner: "Proprietário",
 };
 
 const ROLE_DESCRIPTIONS: Record<string, string> = {
@@ -56,9 +54,12 @@ const ROLE_DESCRIPTIONS: Record<string, string> = {
   admin: "Administrador do projeto",
 };
 
-export function Team() {
+interface ProjectMembersProps {
+  projectId: number;
+}
+
+export function ProjectMembers({ projectId }: ProjectMembersProps) {
   const { user } = useSession();
-  const { activeProject } = useProject();
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,14 +73,12 @@ export function Team() {
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!activeProject) return;
-
       setLoading(true);
       setError(null);
       try {
         // Fetch project members
         const membersData = await apiFetch<ProjectMember[]>(
-          `/api/projects/${activeProject.id}/members`
+          `/api/projects/${projectId}/members`
         );
         setMembers(membersData);
 
@@ -97,15 +96,15 @@ export function Team() {
     };
 
     void fetchData();
-  }, [activeProject, canManageTeam]);
+  }, [projectId, canManageTeam]);
 
   const handleAddMember = async () => {
-    if (!selectedUserId || !activeProject) return;
+    if (!selectedUserId) return;
 
     setIsSubmitting(true);
     try {
       const newMember = await apiFetch<ProjectMember>(
-        `/api/projects/${activeProject.id}/members`,
+        `/api/projects/${projectId}/members`,
         {
           method: "POST",
           body: JSON.stringify({
@@ -131,11 +130,9 @@ export function Team() {
   };
 
   const handleUpdateRole = async (userId: string, newRole: string) => {
-    if (!activeProject) return;
-
     try {
       const updatedMember = await apiFetch<ProjectMember>(
-        `/api/projects/${activeProject.id}/members/${userId}`,
+        `/api/projects/${projectId}/members/${userId}`,
         {
           method: "PATCH",
           body: JSON.stringify({ role: newRole }),
@@ -155,14 +152,12 @@ export function Team() {
   };
 
   const handleRemoveMember = async (userId: string, userName: string) => {
-    if (!activeProject) return;
-
     if (!confirm(`Tem certeza que deseja remover ${userName} do projeto?`)) {
       return;
     }
 
     try {
-      await apiFetch(`/api/projects/${activeProject.id}/members/${userId}`, {
+      await apiFetch(`/api/projects/${projectId}/members/${userId}`, {
         method: "DELETE",
         parseJson: false,
       });
@@ -177,42 +172,25 @@ export function Team() {
     }
   };
 
-  if (!canManageTeam) {
-    return (
-      <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-        Apenas administradores ou owners podem gerenciar o time.
-      </div>
-    );
-  }
-
-  if (!activeProject) {
-    return (
-      <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-        Selecione um projeto para gerenciar membros.
-      </div>
-    );
-  }
-
   // Get available users to add (exclude current members)
   const memberUserIds = new Set(members.map((m) => m.user_id));
   const availableUsers = allUsers.filter((u) => !memberUserIds.has(u.id));
 
   return (
-    <div className="space-y-6">
-      <header className="flex items-start justify-between">
-        <div className="space-y-2">
-          <h1 className="text-2xl font-semibold tracking-tight">Time do Projeto</h1>
+    <div className="space-y-4">
+      <div className="flex items-start justify-between">
+        <div className="space-y-1">
           <p className="text-sm text-muted-foreground">
-            Gerencie membros e permissões do projeto <strong>{activeProject.name || `#${activeProject.project_number}`}</strong>
+            Gerencie quem tem acesso ao projeto e suas permissões.
           </p>
         </div>
         {canManageTeam && availableUsers.length > 0 && (
-          <Button onClick={() => setIsAddDialogOpen(true)}>
+          <Button onClick={() => setIsAddDialogOpen(true)} size="sm">
             <Plus className="mr-2 h-4 w-4" />
             Adicionar Membro
           </Button>
         )}
-      </header>
+      </div>
 
       <div className="rounded-lg border border-border bg-card">
         <table className="min-w-full divide-y divide-border">

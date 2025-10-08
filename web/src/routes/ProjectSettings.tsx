@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/select";
 import { Modal } from "@/components/ui/modal";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ProjectMembers } from "@/components/ProjectMembers";
 import { apiFetch } from "@/lib/api";
 import { useSession } from "@/lib/session";
 import { useProject } from "@/lib/project";
@@ -386,6 +387,7 @@ export function ProjectSettings() {
             <TabsTrigger value="sync">Sincronização</TabsTrigger>
             <TabsTrigger value="roadmap">Etapas do Roadmap</TabsTrigger>
             <TabsTrigger value="epics">Épicos</TabsTrigger>
+            <TabsTrigger value="members">Membros</TabsTrigger>
             <TabsTrigger value="setup">Setup</TabsTrigger>
           </TabsList>
 
@@ -476,6 +478,17 @@ export function ProjectSettings() {
                 <Button onClick={handleOpenEpicManager}>
                   Gerenciar épicos
                 </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="members" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Membros do Projeto</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ProjectMembers projectId={projectInfo.id} />
               </CardContent>
             </Card>
           </TabsContent>
