@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 from typing import Optional
 
 from argon2 import PasswordHasher, exceptions as argon2_exceptions
@@ -43,3 +44,8 @@ def ensure_password_strength(password: str) -> None:
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Senha deve possuir ao menos 8 caracteres.",
         )
+
+
+def generate_verification_token() -> str:
+    """Gera um token de verificação de email seguro (URL-safe)."""
+    return secrets.token_urlsafe(32)

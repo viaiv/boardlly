@@ -30,3 +30,11 @@ class UserResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class VerifyEmailRequest(BaseModel):
+    token: str = Field(min_length=1, description="Token de verificação recebido por email")
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr

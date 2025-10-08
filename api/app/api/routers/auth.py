@@ -7,13 +7,23 @@ from app.api import deps
 from app.core.security import clear_session, ensure_password_strength, establish_session
 from app.models.account import Account
 from app.models.user import AppUser
-from app.schemas.auth import LoginRequest, RegisterRequest, UserResponse
+from app.schemas.auth import (
+    LoginRequest,
+    RegisterRequest,
+    ResendVerificationRequest,
+    UserResponse,
+    VerifyEmailRequest,
+)
 from app.services.auth import (
     authenticate_user,
     count_users,
     create_user,
     get_user_by_email,
 )
+from app.services.email import send_email_verification
+from app.core.security import generate_verification_token
+from datetime import datetime, timedelta, timezone
+from sqlalchemy import select
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -67,8 +77,23 @@ async def register_user(
         name=payload.name,
     )
 
+    # Primeiro usuário (owner) é verificado automaticamente
     if total_users == 0:
+        user.email_verified = True
+        user.email_verification_token = None
+        user.email_verification_token_expires = None
         establish_session(request, str(user.id))
+    else:
+        # Enviar email de verificação para novos usuários
+        try:
+            await send_email_verification(
+                to_email=user.email,
+                verification_token=user.email_verification_token,
+                user_name=user.name,
+            )
+        except Exception as e:
+            # Log error but don't fail registration
+            print(f"⚠️  Falha ao enviar email de verificação: {e}")
 
     await db.commit()
     await db.refresh(user)
@@ -93,3 +118,81 @@ async def login(
 async def logout(request: Request) -> Response:
     clear_session(request)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/verify-email", status_code=status.HTTP_200_OK)
+async def verify_email(
+    payload: VerifyEmailRequest,
+    db: AsyncSession = Depends(deps.get_db),
+) -> dict[str, str]:
+    """
+    Verifica o email de um usuário usando o token enviado por email.
+    """
+    # Buscar usuário com o token
+    stmt = select(AppUser).where(AppUser.email_verification_token == payload.token)
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail="Token de verificação inválido"
+        )
+
+    # Verificar se o token expirou
+    if user.email_verification_token_expires and user.email_verification_token_expires < datetime.now(timezone.utc):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="Token de verificação expirado. Solicite um novo email de verificação."
+        )
+
+    # Verificar email
+    user.email_verified = True
+    user.email_verification_token = None
+    user.email_verification_token_expires = None
+
+    await db.commit()
+
+    return {"message": "Email verificado com sucesso! Você já pode fazer login."}
+
+
+@router.post("/resend-verification", status_code=status.HTTP_200_OK)
+async def resend_verification(
+    payload: ResendVerificationRequest,
+    db: AsyncSession = Depends(deps.get_db),
+) -> dict[str, str]:
+    """
+    Reenvia o email de verificação para um usuário.
+    """
+    user = await get_user_by_email(db, payload.email)
+
+    if not user:
+        # Por segurança, não revela se o email existe ou não
+        return {"message": "Se o email existir, um novo link de verificação foi enviado."}
+
+    # Se já verificado, retorna mensagem genérica
+    if user.email_verified:
+        return {"message": "Se o email existir, um novo link de verificação foi enviado."}
+
+    # Gerar novo token e expiração
+    new_token = generate_verification_token()
+    user.email_verification_token = new_token
+    user.email_verification_token_expires = datetime.now(timezone.utc) + timedelta(hours=24)
+
+    await db.commit()
+
+    # Enviar email
+    try:
+        await send_email_verification(
+            to_email=user.email,
+            verification_token=new_token,
+            user_name=user.name,
+        )
+    except Exception as e:
+        print(f"⚠️  Falha ao enviar email de verificação: {e}")
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erro ao enviar email de verificação. Tente novamente mais tarde."
+        )
+
+    return {"message": "Se o email existir, um novo link de verificação foi enviado."}

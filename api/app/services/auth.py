@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import HTTPException, status
@@ -7,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import hash_password, verify_password
+from app.core.security import hash_password, verify_password, generate_verification_token
 from app.models.account import Account
 from app.models.user import AppUser
 
@@ -41,12 +42,18 @@ async def create_user(
     name: Optional[str] = None,
 ) -> AppUser:
     hashed = hash_password(password)
+    verification_token = generate_verification_token()
+    token_expires = datetime.now(timezone.utc) + timedelta(hours=24)
+
     user = AppUser(
         account_id=account.id if account else None,
         email=email.lower(),
         password_hash=hashed,
         name=name,
         role=role,
+        email_verified=False,
+        email_verification_token=verification_token,
+        email_verification_token_expires=token_expires,
     )
     db.add(user)
     try:
@@ -68,4 +75,12 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> AppU
     user = await get_user_by_email(db, email.lower())
     if not user or not verify_password(password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Credenciais inválidas")
+
+    # Verificar se o email foi confirmado
+    if not user.email_verified:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail="Email não verificado. Por favor, verifique seu email antes de fazer login."
+        )
+
     return user
