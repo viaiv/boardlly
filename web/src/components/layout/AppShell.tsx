@@ -19,7 +19,6 @@ const baseNavigation = [
   { to: "/sprints", label: "Sprints" },
   { to: "/requests", label: "Solicitações" },
   { to: "/backlog", label: "Backlog" },
-  { to: "/settings", label: "Configurações" },
 ];
 
 export function AppShell({ headerActions }: { headerActions?: ReactNode }) {
@@ -33,12 +32,17 @@ export function AppShell({ headerActions }: { headerActions?: ReactNode }) {
 
   const navigation = useMemo(() => {
     if (user?.role === "admin" || user?.role === "owner") {
-      return [...baseNavigation.slice(0, 5), { to: "/team", label: "Time" }, ...baseNavigation.slice(5)];
+      return [...baseNavigation, { to: "/team", label: "Time" }];
     }
     return baseNavigation;
   }, [user?.role]);
 
   const activeLabel = useMemo(() => {
+    // Check settings first (not in main navigation)
+    if (location.pathname.startsWith("/settings")) {
+      return "Configurações";
+    }
+
     const current = navigation.find((item) =>
       item.to === "/" ? location.pathname === "/" : location.pathname.startsWith(item.to),
     );
@@ -84,6 +88,11 @@ export function AppShell({ headerActions }: { headerActions?: ReactNode }) {
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                <DropdownMenuItem asChild>
+                  <NavLink to="/settings" className="cursor-pointer">
+                    Configurações
+                  </NavLink>
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   onSelect={(event) => {
                     event.preventDefault();
