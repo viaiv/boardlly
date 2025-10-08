@@ -4,8 +4,8 @@ from collections import defaultdict
 from decimal import Decimal
 from typing import Any, Iterable
 
-from fastapi import APIRouter, Depends, HTTPException, status, Response
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Header
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
@@ -64,8 +64,37 @@ async def _get_account_or_404(db: AsyncSession, current_user: AppUser) -> Accoun
     return account
 
 
-async def _get_project_or_404(db: AsyncSession, account: Account) -> GithubProject:
-    stmt = select(GithubProject).where(GithubProject.account_id == account.id)
+async def _get_project_or_404(
+    db: AsyncSession,
+    account: Account,
+    project_id: int | None = None
+) -> GithubProject:
+    """
+    Busca projeto por ID (se fornecido) ou retorna o primeiro projeto da conta.
+
+    Args:
+        db: Sessão do banco
+        account: Conta do usuário
+        project_id: ID do projeto (opcional, vem do header X-Project-Id)
+
+    Returns:
+        GithubProject configurado
+
+    Raises:
+        HTTPException: Se projeto não encontrado ou não pertence à conta
+    """
+    if project_id:
+        # Buscar projeto específico e verificar se pertence à conta
+        project = await db.get(GithubProject, project_id)
+        if not project or project.account_id != account.id:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                detail="Projeto não encontrado ou não pertence a esta conta"
+            )
+        return project
+
+    # Buscar primeiro projeto da conta (comportamento legado)
+    stmt = select(GithubProject).where(GithubProject.account_id == account.id).limit(1)
     result = await db.execute(stmt)
     project = result.scalar_one_or_none()
     if not project:
@@ -73,13 +102,62 @@ async def _get_project_or_404(db: AsyncSession, account: Account) -> GithubProje
     return project
 
 
+@router.get("", response_model=list[GithubProjectResponse])
+async def list_projects(
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: AppUser = Depends(deps.get_current_user),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
+) -> list[GithubProjectResponse]:
+    """Lista todos os projetos GitHub da conta do usuário."""
+    account = await _get_account_or_404(db, current_user)
+    stmt = select(GithubProject).where(GithubProject.account_id == account.id).order_by(GithubProject.created_at.desc())
+    result = await db.execute(stmt)
+    projects = result.scalars().all()
+    return [GithubProjectResponse.model_validate(p) for p in projects]
+
+
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_project(
+    project_id: int,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: AppUser = Depends(deps.require_roles("owner", "admin")),
+) -> Response:
+    """
+    Remove um projeto GitHub da conta.
+
+    ATENÇÃO: Esta operação também remove todos os itens do projeto (issues, PRs, etc).
+    """
+    account = await _get_account_or_404(db, current_user)
+
+    # Verificar se o projeto existe e pertence à conta
+    project = await db.get(GithubProject, project_id)
+    if not project or project.account_id != account.id:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail="Projeto não encontrado ou não pertence a esta conta"
+        )
+
+    # Deletar projeto (cascade deleta itens relacionados)
+    await db.delete(project)
+    await db.commit()
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/current", response_model=GithubProjectResponse)
 async def get_current_project(
     db: AsyncSession = Depends(deps.get_db),
     current_user: AppUser = Depends(deps.get_current_user),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> GithubProjectResponse:
+    """
+    Retorna o projeto ativo.
+
+    Se X-Project-Id header estiver presente, retorna aquele projeto.
+    Caso contrário, retorna o primeiro projeto da conta.
+    """
     account = await _get_account_or_404(db, current_user)
-    project = await _get_project_or_404(db, account)
+    project = await _get_project_or_404(db, account, x_project_id)
     return GithubProjectResponse.model_validate(project)
 
 
@@ -91,6 +169,7 @@ async def list_current_project_items(
     search: str | None = None,
     db: AsyncSession = Depends(deps.get_db),
     current_user: AppUser = Depends(deps.get_current_user),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> list[ProjectItemResponse]:
     """
     Lista itens do projeto atual com filtros opcionais.
@@ -102,7 +181,7 @@ async def list_current_project_items(
     - `search`: Buscar no título
     """
     account = await _get_account_or_404(db, current_user)
-    project = await _get_project_or_404(db, account)
+    project = await _get_project_or_404(db, account, x_project_id)
 
     stmt = select(ProjectItem).where(ProjectItem.project_id == project.id)
 
@@ -134,9 +213,10 @@ async def update_project_item(
     payload: ProjectItemUpdateRequest,
     db: AsyncSession = Depends(deps.get_db),
     current_user: AppUser = Depends(deps.require_roles("owner", "admin")),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> ProjectItemResponse:
     account = await _get_account_or_404(db, current_user)
-    project = await _get_project_or_404(db, account)
+    project = await _get_project_or_404(db, account, x_project_id)
 
     item = await db.get(ProjectItem, item_id)
     if not item or item.project_id != project.id or item.account_id != account.id:
@@ -181,9 +261,10 @@ async def list_project_item_comments(
     item_id: int,
     db: AsyncSession = Depends(deps.get_db),
     current_user: AppUser = Depends(deps.get_current_user),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> list[ProjectItemCommentResponse]:
     account = await _get_account_or_404(db, current_user)
-    project = await _get_project_or_404(db, account)
+    project = await _get_project_or_404(db, account, x_project_id)
 
     item = await db.get(ProjectItem, item_id)
     if not item or item.project_id != project.id or item.account_id != account.id:
@@ -225,9 +306,10 @@ async def get_project_item_details(
     item_id: int,
     db: AsyncSession = Depends(deps.get_db),
     current_user: AppUser = Depends(deps.get_current_user),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> ProjectItemDetailResponse:
     account = await _get_account_or_404(db, current_user)
-    project = await _get_project_or_404(db, account)
+    project = await _get_project_or_404(db, account, x_project_id)
 
     item = await db.get(ProjectItem, item_id)
     if not item or item.project_id != project.id or item.account_id != account.id:
@@ -280,9 +362,10 @@ async def update_status_columns(
     payload: dict,
     db: AsyncSession = Depends(deps.get_db),
     current_user: AppUser = Depends(deps.require_roles("owner", "admin")),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> list[str]:
     account = await _get_account_or_404(db, current_user)
-    project = await _get_project_or_404(db, account)
+    project = await _get_project_or_404(db, account, x_project_id)
 
     columns = payload.get("columns")
     if not isinstance(columns, list):
@@ -338,6 +421,7 @@ def _safe_float(value: Any) -> float:
 async def get_setup_status(
     db: AsyncSession = Depends(deps.get_db),
     current_user: AppUser = Depends(deps.get_current_user),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> dict[str, Any]:
     """
     Verifica quais campos necessários estão configurados no projeto.
@@ -359,7 +443,7 @@ async def get_setup_status(
     )
 
     account = await _get_account_or_404(db, current_user)
-    project = await _get_project_or_404(db, account)
+    project = await _get_project_or_404(db, account, x_project_id)
 
     # Carregar campos atuais
     fields = await _load_project_fields(db, project.id)
@@ -418,7 +502,7 @@ async def run_project_setup(
     ```
     """
     account = await _get_account_or_404(db, current_user)
-    project = await _get_project_or_404(db, account)
+    project = await _get_project_or_404(db, account, x_project_id)
 
     report = await setup_project_fields(db, account, project)
 
@@ -431,13 +515,14 @@ async def run_project_setup(
 async def list_project_fields(
     db: AsyncSession = Depends(deps.get_db),
     current_user: AppUser = Depends(deps.get_current_user),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> dict[str, Any]:
     """
     Lista todos os campos do projeto para debug.
     Útil para verificar se o campo Iteration está configurado.
     """
     account = await _get_account_or_404(db, current_user)
-    project = await _get_project_or_404(db, account)
+    project = await _get_project_or_404(db, account, x_project_id)
 
     stmt = select(GithubProjectField).where(GithubProjectField.project_id == project.id)
     result = await db.execute(stmt)
@@ -465,9 +550,10 @@ async def list_project_fields(
 async def get_iteration_dashboard(
     db: AsyncSession = Depends(deps.get_db),
     current_user: AppUser = Depends(deps.get_current_user),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> IterationDashboardResponse:
     account = await _get_account_or_404(db, current_user)
-    project = await _get_project_or_404(db, account)
+    project = await _get_project_or_404(db, account, x_project_id)
 
     stmt = select(ProjectItem).where(ProjectItem.project_id == project.id)
     result = await db.execute(stmt)
@@ -526,7 +612,7 @@ async def update_project_item(
     ```
     """
     account = await _get_account_or_404(db, current_user)
-    project = await _get_project_or_404(db, account)
+    project = await _get_project_or_404(db, account, x_project_id)
 
     item = await db.get(ProjectItem, item_id)
     if not item or item.project_id != project.id:
@@ -668,9 +754,10 @@ def _build_iteration_summaries(
 async def get_epic_dashboard(
     db: AsyncSession = Depends(deps.get_db),
     current_user: AppUser = Depends(deps.get_current_user),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> EpicDashboardResponse:
     account = await _get_account_or_404(db, current_user)
-    project = await _get_project_or_404(db, account)
+    project = await _get_project_or_404(db, account, x_project_id)
 
     stmt = select(ProjectItem).where(ProjectItem.project_id == project.id)
     result = await db.execute(stmt)
@@ -772,10 +859,11 @@ def _build_epic_summaries(items: list[ProjectItem], done_keywords: Iterable[str]
 async def list_epics(
     db: AsyncSession = Depends(deps.get_db),
     current_user: AppUser = Depends(deps.get_current_user),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> list[EpicDetailResponse]:
     """Lista épicos completos (issues que são épicos) com descrição e progresso"""
     account = await _get_account_or_404(db, current_user)
-    project = await _get_project_or_404(db, account)
+    project = await _get_project_or_404(db, account, x_project_id)
 
     # Buscar todos os itens do projeto
     stmt = select(ProjectItem).where(ProjectItem.project_id == project.id)
@@ -868,10 +956,11 @@ async def create_epic(
     epic_data: EpicCreateRequest,
     db: AsyncSession = Depends(deps.get_db),
     current_user: AppUser = Depends(deps.get_current_user),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> EpicCreateResponse:
     """Cria um novo épico (issue) no GitHub, adiciona ao projeto e opcionalmente vincula ao campo Epic"""
     account = await _get_account_or_404(db, current_user)
-    project = await _get_project_or_404(db, account)
+    project = await _get_project_or_404(db, account, x_project_id)
     token = await get_github_token(db, account)
 
     # Get epic field ID if epic_option_id is provided
@@ -916,11 +1005,12 @@ async def create_epic(
 async def list_epic_options_endpoint(
     db: AsyncSession = Depends(deps.get_db),
     current_user: AppUser = Depends(deps.get_current_user),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> list[EpicOptionResponse]:
     print("DEBUG: ===== ENDPOINT /current/epics/options CHAMADO =====")
     account = await _get_account_or_404(db, current_user)
     print(f"DEBUG: Account ID: {account.id}")
-    project = await _get_project_or_404(db, account)
+    project = await _get_project_or_404(db, account, x_project_id)
     print(f"DEBUG: Project ID: {project.id}, name: {project.name}")
     options = await list_epic_options(db, project)
     print(f"DEBUG: list_epic_options retornou {len(options)} opções")
@@ -938,9 +1028,10 @@ async def create_epic_option_endpoint(
     payload: EpicOptionCreateRequest,
     db: AsyncSession = Depends(deps.get_db),
     current_user: AppUser = Depends(deps.require_roles("owner", "admin")),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> EpicOptionResponse:
     account = await _get_account_or_404(db, current_user)
-    project = await _get_project_or_404(db, account)
+    project = await _get_project_or_404(db, account, x_project_id)
     option = await create_epic_option(db, account, project, payload.name, payload.color)
     return EpicOptionResponse.model_validate(option.__dict__)
 
@@ -951,9 +1042,10 @@ async def update_epic_option_endpoint(
     payload: EpicOptionUpdateRequest,
     db: AsyncSession = Depends(deps.get_db),
     current_user: AppUser = Depends(deps.require_roles("owner", "admin")),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> EpicOptionResponse:
     account = await _get_account_or_404(db, current_user)
-    project = await _get_project_or_404(db, account)
+    project = await _get_project_or_404(db, account, x_project_id)
     option = await update_epic_option(db, account, project, option_id, payload.name, payload.color)
     return EpicOptionResponse.model_validate(option.__dict__)
 
@@ -963,8 +1055,9 @@ async def delete_epic_option_endpoint(
     option_id: str,
     db: AsyncSession = Depends(deps.get_db),
     current_user: AppUser = Depends(deps.require_roles("owner", "admin")),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> Response:
     account = await _get_account_or_404(db, current_user)
-    project = await _get_project_or_404(db, account)
+    project = await _get_project_or_404(db, account, x_project_id)
     await delete_epic_option(db, account, project, option_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
