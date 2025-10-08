@@ -82,6 +82,18 @@ class Settings(BaseSettings):
     session_cookie_name: str = Field(default="tactyo_session")
     session_max_age_seconds: int = Field(default=60 * 60 * 24 * 7)
 
+    # SMTP Configuration
+    smtp_host: str = Field(default="")
+    smtp_port: int = Field(default=587)
+    smtp_user: str = Field(default="")
+    smtp_password: str = Field(default="")
+    smtp_from_email: str = Field(default="noreply@tactyo.com")
+    smtp_from_name: str = Field(default="Tactyo")
+    smtp_use_tls: bool = Field(default=True)
+
+    # Frontend URL for email links
+    frontend_url: str = Field(default="http://localhost:5173")
+
     @property
     def cors_origins(self) -> List[str]:
         """Retorna CORS origins como lista de strings."""
