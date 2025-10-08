@@ -114,6 +114,33 @@ async def _get_project_or_404(
     return project
 
 
+async def _user_can_manage_project(
+    db: AsyncSession,
+    user: AppUser,
+    project: GithubProject
+) -> bool:
+    """
+    Verifica se o usuário tem permissão para gerenciar o projeto.
+
+    Retorna True se:
+    - Usuário é owner ou admin da conta
+    - Usuário é admin do projeto específico
+    """
+    # Verificar se é owner/admin da conta
+    if user.role in ["owner", "admin"]:
+        return True
+
+    # Verificar se é admin do projeto
+    stmt = select(ProjectMember).where(
+        ProjectMember.user_id == user.id,
+        ProjectMember.project_id == project.id,
+        ProjectMember.role == "admin"
+    )
+    result = await db.execute(stmt)
+    member = result.scalar_one_or_none()
+    return member is not None
+
+
 @router.get("", response_model=list[GithubProjectResponse])
 async def list_projects(
     db: AsyncSession = Depends(deps.get_db),
@@ -1078,6 +1105,65 @@ async def delete_epic_option_endpoint(
 # ============================================================================
 # Project Members Management
 # ============================================================================
+
+
+@router.get("/{project_id}/available-users", response_model=list[dict])
+async def list_available_users_for_project(
+    project_id: int,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: AppUser = Depends(deps.require_roles("owner", "admin")),
+) -> list[dict]:
+    """
+    Lista usuários disponíveis para convidar ao projeto.
+
+    Retorna apenas usuários da mesma conta do projeto que:
+    - Não são membros ativos do projeto
+    - Não têm convites pendentes
+
+    **Permissão:** owner, admin (do projeto)
+    """
+    account = await _get_account_or_404(db, current_user)
+    project = await _get_project_or_404(db, account, project_id)
+
+    # Verificar permissão no projeto
+    has_permission = await _user_can_manage_project(db, current_user, project)
+    if not has_permission:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail="Você não tem permissão para gerenciar membros deste projeto"
+        )
+
+    # Buscar todos os usuários da conta do projeto
+    stmt = select(AppUser).where(AppUser.account_id == project.account_id)
+    result = await db.execute(stmt)
+    all_users = result.scalars().all()
+
+    # Buscar IDs de usuários que já são membros
+    stmt_members = select(ProjectMember.user_id).where(ProjectMember.project_id == project.id)
+    result_members = await db.execute(stmt_members)
+    member_ids = {row[0] for row in result_members.all()}
+
+    # Buscar IDs de usuários com convites pendentes
+    stmt_invites = select(ProjectInvite.invited_user_id).where(
+        ProjectInvite.project_id == project.id,
+        ProjectInvite.status == "pending"
+    )
+    result_invites = await db.execute(stmt_invites)
+    invited_ids = {row[0] for row in result_invites.all()}
+
+    # Filtrar usuários disponíveis
+    available_users = [
+        {
+            "id": str(user.id),
+            "email": user.email,
+            "name": user.name,
+            "role": user.role,
+        }
+        for user in all_users
+        if user.id not in member_ids and user.id not in invited_ids
+    ]
+
+    return available_users
 
 
 @router.get("/{project_id}/members", response_model=list[ProjectMemberResponse])

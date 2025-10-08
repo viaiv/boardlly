@@ -96,10 +96,10 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
         );
         setMembers(membersData);
 
-        // Fetch pending invites if user can manage team
+        // Fetch available users and pending invites if user can manage team
         if (canManageTeam) {
           const [usersData, invitesData] = await Promise.all([
-            apiFetch<User[]>("/api/users"),
+            apiFetch<User[]>(`/api/projects/${projectId}/available-users`),
             apiFetch<ProjectInvite[]>(`/api/projects/${projectId}/invites`),
           ]);
           setAllUsers(usersData);
@@ -210,10 +210,8 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
     }
   };
 
-  // Get available users to add (exclude current members and pending invites)
-  const memberUserIds = new Set(members.map((m) => m.user_id));
-  const invitedUserIds = new Set(invites.map((i) => i.invited_user_id));
-  const availableUsers = allUsers.filter((u) => !memberUserIds.has(u.id) && !invitedUserIds.has(u.id));
+  // Backend já retorna apenas usuários disponíveis (filtrando membros e convidados)
+  const availableUsers = allUsers;
 
   return (
     <div className="space-y-4">
