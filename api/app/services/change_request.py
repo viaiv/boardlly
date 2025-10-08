@@ -14,6 +14,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.account import Account
 from app.models.change_request import ChangeRequest
 from app.models.github_project import GithubProject
 from app.models.user import AppUser
@@ -222,8 +223,12 @@ async def approve_change_request(
     if data.create_issue:
         project = await get_github_project(db, request.account_id)
 
-        # Obter token GitHub
-        token = await get_github_token(db, request.account_id)
+        # Obter Account e token GitHub
+        account = await db.get(Account, request.account_id)
+        if not account:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Conta não encontrada")
+
+        token = await get_github_token(db, account)
         client = GithubGraphQLClient(token)
 
         # Buscar nome do criador

@@ -8,6 +8,62 @@ Gerar um **MVP** de um app web autenticado que exibe um **dashboard** de progres
 
 ---
 
+## Status da Implementação (Atualizado em 2025-10-07)
+
+### ✅ Implementado
+
+1. **Autenticação local** (email/senha) com sessões httpOnly
+2. **RBAC** (viewer/editor/pm/admin/owner)
+3. **GitHub Projects v2** sincronização completa (GraphQL API)
+4. **Dashboard** com KPIs e métricas (itens por status, sprints, epics)
+5. **Roadmap** com visualização de itens do projeto
+6. **Change Requests (Solicitações)** - Fluxo completo:
+   - ✅ CRUD de solicitações (criar, listar, detalhar, atualizar)
+   - ✅ Aprovação/rejeição por PM/Admin/Owner
+   - ✅ Criação automática de Issue no GitHub após aprovação
+   - ✅ Adição automática ao Project
+   - ✅ Rastreamento de conversão (pending → approved → converted)
+7. **Epics** com custom fields e links
+8. **Sprints/Iterations** com planning e visualização
+
+### 🚧 Pendente
+
+1. **Backlog** como entidade separada (atualmente sincroniza direto do Project)
+2. **Webhooks** do GitHub (sincronização é via polling manual)
+3. **Sincronização automática** (cron job)
+4. **Email** (convites e notificações)
+5. **Testes automatizados** (unitários e E2E)
+
+### 📝 Decisões de Implementação
+
+**Change Request → Issue (Sem BacklogItem intermediário)**
+
+A implementação atual segue um fluxo simplificado:
+- Editor cria **ChangeRequest** (status: `pending`)
+- PM/Admin aprova → cria **Issue no GitHub** diretamente
+- Issue é adicionada ao **Project v2**
+- ChangeRequest muda para `converted` e armazena referência à Issue
+
+**Motivo**: Evitar duplicação entre `backlog_item` e `project_item`. O backlog é uma view filtrada de `project_item` (status: backlog/todo).
+
+**Campos de ChangeRequest**:
+```sql
+- id (uuid)
+- account_id (uuid)
+- created_by (uuid) → app_user
+- reviewed_by (uuid) → app_user
+- title (text, max 500)
+- description (text, opcional)
+- impact (text, opcional)
+- priority (low/medium/high/urgent)
+- status (pending/approved/rejected/converted)
+- request_type (feature/bug/tech_debt/docs, opcional)
+- github_issue_node_id, github_issue_number, github_issue_url
+- created_at, reviewed_at, review_notes
+```
+
+---
+
 ## Escopo (MVP)
 
 1. **Autenticação** via GitHub OAuth (login) e RBAC básico (viewer, editor, pm, admin).
@@ -52,15 +108,17 @@ POST /api/invite                             -> envia convite por e-mail (opcion
 GET  /api/projects/{project_id}/overview     -> KPIs e métricas agregadas
 GET  /api/projects/{project_id}/items        -> itens do Project (paginado + filtros)
 
-POST /api/requests                           -> cria change_request
-GET  /api/requests                           -> lista solicitações (filtros: status, prioridade)
-GET  /api/requests/{id}                      -> detalhe
-PATCH /api/requests/{id}                     -> atualizar (status, campos)
-POST /api/requests/{id}/approve              -> aprova e cria backlog_item; opcional: cria Issue + ProjectItem
+POST /api/requests                           -> cria change_request ✅
+GET  /api/requests                           -> lista solicitações (filtros: status, prioridade) ✅
+GET  /api/requests/{id}                      -> detalhe ✅
+PATCH /api/requests/{id}                     -> atualizar (status, campos) ✅
+POST /api/requests/{id}/approve              -> aprova e cria Issue + adiciona ao Project ✅
+POST /api/requests/{id}/reject               -> rejeita solicitação ✅
+GET  /api/requests/stats/summary             -> estatísticas (total, pending, approved, rejected, converted) ✅
 
-POST /api/backlog                            -> cria backlog manual
-GET  /api/backlog                            -> lista backlog
-PATCH /api/backlog/{id}                      -> atualiza (status, estimate, priority)
+POST /api/backlog                            -> cria backlog manual 🚧
+GET  /api/backlog                            -> lista backlog 🚧
+PATCH /api/backlog/{id}                      -> atualiza (status, estimate, priority) 🚧
 
 POST /api/github/sync/{project_id}           -> força sync on-demand (polling GraphQL)
 POST /api/settings/github-token              -> cadastra/atualiza token (PAT) do GitHub (somente owner)
@@ -469,6 +527,26 @@ paths:
 
 ---
 
-## Testes (MVP)
+## Testes
+
+### ✅ Teste E2E Realizado (2025-10-07)
+
+**Fluxo testado com sucesso:**
+1. Login como usuário PM/Admin
+2. Criação de Change Request via API
+3. Aprovação da Change Request com opções:
+   - `create_issue: true`
+   - `add_to_project: true`
+4. Verificação de Issue criada no GitHub ([#14](https://github.com/viaiv/tactyo/issues/14))
+5. Confirmação de status `converted` na solicitação
+
+**Script de teste**: `test_change_request_e2e.py` (raiz do projeto)
+
+```bash
+# Executar teste E2E
+python3 test_change_request_e2e.py
+```
+
+### 🚧 Testes Pendentes (MVP)
 
 * **Integração**: mock da API GraphQL do GitHub para

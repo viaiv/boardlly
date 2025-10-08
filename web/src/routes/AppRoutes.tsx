@@ -4,6 +4,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { Overview } from "@/routes/Overview";
 import { Roadmap } from "@/routes/Roadmap";
 import { Requests } from "@/routes/Requests";
+import { RequestNew } from "@/routes/RequestNew";
 import { RequestDetail } from "@/routes/RequestDetail";
 import { Backlog } from "@/routes/Backlog";
 import { Settings } from "@/routes/Settings";
@@ -22,6 +23,7 @@ export function AppRoutes() {
           <Route path="roadmap" element={<Roadmap />} />
           <Route path="items" element={<Navigate to="/roadmap" replace />} />
           <Route path="requests" element={<Requests />} />
+          <Route path="requests/new" element={<RequestNew />} />
           <Route path="requests/:requestId" element={<RequestDetail />} />
           <Route path="backlog" element={<Backlog />} />
           <Route path="team" element={<Team />} />
