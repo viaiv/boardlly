@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { CalendarIcon, TrendingUpIcon, CheckCircle2Icon, InfoIcon, ExternalLinkIcon } from "lucide-react";
+import { CalendarIcon, TrendingUpIcon, CheckCircle2Icon, InfoIcon, ExternalLinkIcon, RefreshCwIcon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -116,22 +116,52 @@ export function Sprints() {
     return now >= start && now <= end;
   }
 
+  // Criar sprints a partir das options (inclui sprints vazias)
+  const allSprints: IterationSummary[] = (data?.options || []).map((option) => {
+    // Procurar summary correspondente (pode não existir se sprint estiver vazia)
+    const summary = data?.summaries.find((s) => s.iteration_id === option.id);
+
+    if (summary) {
+      return summary;
+    }
+
+    // Sprint vazia - criar summary com valores zerados
+    return {
+      iteration_id: option.id,
+      name: option.name,
+      start_date: option.start_date,
+      end_date: option.end_date,
+      item_count: 0,
+      completed_count: 0,
+      total_estimate: 0,
+      completed_estimate: 0,
+      status_breakdown: [],
+    };
+  });
+
   // Separar sprints em ativas, futuras e passadas
-  const activeSprints = data?.summaries.filter((s) => s.iteration_id && isActiveSprint(s)) || [];
-  const otherSprints =
-    data?.summaries.filter((s) => s.iteration_id && !isActiveSprint(s)) || [];
-  const withoutSprint =
-    data?.summaries.find((s) => !s.iteration_id) || null;
+  const activeSprints = allSprints.filter((s) => isActiveSprint(s));
+  const otherSprints = allSprints.filter((s) => !isActiveSprint(s));
+  const withoutSprint = data?.summaries.find((s) => !s.iteration_id) || null;
 
   return (
     <div className="space-y-6">
-      <header>
+      <header className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Sprints</h1>
           <p className="text-sm text-muted-foreground">
             Acompanhe o progresso e métricas das suas iterações
           </p>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => loadDashboard()}
+          disabled={loading}
+        >
+          <RefreshCwIcon className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+          Atualizar
+        </Button>
       </header>
 
       {/* Aviso sobre criação de sprints */}
@@ -171,8 +201,8 @@ export function Sprints() {
                 <div className="bg-blue-100 border border-blue-300 rounded-lg p-3">
                   <p className="text-xs text-blue-900 font-medium mb-1">💡 Dica:</p>
                   <p className="text-xs text-blue-800">
-                    As sprints criadas aparecerão automaticamente aqui em até 15 minutos (sincronização automática).
-                    Você pode forçar a sincronização em Settings → Sincronizar Agora.
+                    Após criar uma sprint no GitHub, clique em "Atualizar" no canto superior direito desta página
+                    ou aguarde até 15 minutos para sincronização automática.
                   </p>
                 </div>
               </div>

@@ -232,6 +232,16 @@ async def fetch_project_metadata(client: GithubGraphQLClient, owner: str, number
         name = field.get("name")
         if not name:
             continue
+
+        # Debug: Log iteration fields
+        if field.get("__typename") == "ProjectV2IterationField":
+            print(f"DEBUG: Campo Iteration encontrado - {name}")
+            print(f"DEBUG: Configuração completa: {field.get('configuration')}")
+            iterations = field.get("configuration", {}).get("iterations", [])
+            print(f"DEBUG: Total de iterations: {len(iterations)}")
+            for it in iterations:
+                print(f"DEBUG:   - {it.get('title')}: {it.get('startDate')} ({it.get('duration')} dias)")
+
         field_mappings[name] = field
     return ProjectMetadata(
         node_id=project["id"],
@@ -895,24 +905,40 @@ async def list_iteration_options(db: AsyncSession, project: GithubProject) -> li
 
 
 def _extract_iteration_options(iteration_field: Optional[GithubProjectField]) -> list[IterationOptionData]:
-    if not iteration_field or not iteration_field.options:
+    print(f"DEBUG _extract_iteration_options: field={iteration_field}")
+    if not iteration_field:
+        print("DEBUG: iteration_field is None")
         return []
+
+    print(f"DEBUG: iteration_field.options type: {type(iteration_field.options)}")
+    print(f"DEBUG: iteration_field.options value: {iteration_field.options}")
+
+    if not iteration_field.options:
+        print("DEBUG: iteration_field.options is empty/None")
+        return []
+
     options_raw = iteration_field.options
     iterations: list[dict[str, Any]] = []
     if isinstance(options_raw, dict):
         iterations = options_raw.get("iterations") or []
+        print(f"DEBUG: Extracted {len(iterations)} iterations from dict")
     elif isinstance(options_raw, list):
         iterations = options_raw
+        print(f"DEBUG: Using {len(iterations)} iterations from list")
 
     collected: list[IterationOptionData] = []
     for option in iterations or []:
         option_id = option.get("id")
         title = option.get("title") or option.get("name")
+        print(f"DEBUG: Processing iteration - id={option_id}, title={title}")
         if not option_id or not title:
+            print(f"DEBUG: Skipping iteration (missing id or title)")
             continue
         start = parse_date_value(option.get("startDate"))
         end = compute_iteration_end(start, option.get("duration"))
         collected.append(IterationOptionData(id=option_id, title=title, start_date=start, end_date=end))
+
+    print(f"DEBUG: Returning {len(collected)} iteration options")
     return collected
 
 
