@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { NavLink, Outlet } from "react-router-dom";
 
 import { cn } from "@/lib/utils";
 import { useSession } from "@/lib/session";
@@ -23,7 +23,6 @@ const baseNavigation = [
 
 export function AppShell() {
   const { user, refresh } = useSession();
-  const location = useLocation();
 
   const handleLogout = async () => {
     await apiFetch("/api/auth/logout", { method: "POST", parseJson: false });
