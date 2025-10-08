@@ -40,7 +40,7 @@ export function AppShell() {
           <div className="flex flex-col gap-1">
             <h1 className="text-xl font-semibold">Tactyo</h1>
             <p className="text-sm text-muted-foreground">
-              Dashboard conectado ao GitHub Projects v2.
+              Gestão integrada ao GitHub Projects
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-4">

@@ -37,9 +37,9 @@ export function Login() {
     <div className="flex min-h-screen flex-col items-center justify-center bg-background px-6 py-12">
       <div className="w-full max-w-sm space-y-6">
         <div className="space-y-2 text-center">
-          <h1 className="text-2xl font-semibold tracking-tight">Entrar no Tactyo</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Tactyo</h1>
           <p className="text-sm text-muted-foreground">
-            Use suas credenciais para acessar o dashboard e backlog integrados ao GitHub Projects.
+            Use suas credenciais para acessar.
           </p>
         </div>
         <form className="space-y-4" onSubmit={handleSubmit}>
