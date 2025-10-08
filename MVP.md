@@ -35,12 +35,18 @@ Gerar um **MVP** de um app web autenticado que exibe um **dashboard** de progres
    - ✅ Eventos: project_v2_item, issues, pull_request
    - ✅ Sincronização em tempo real
    - ✅ Documentação completa (docs/WEBHOOKS.md)
+11. **Backlog View** 📋:
+   - ✅ Página /backlog com listagem de itens sem sprint
+   - ✅ Filtros: Status (Backlog/Todo/All), Epic, Busca
+   - ✅ Agrupamento por Epic com contadores
+   - ✅ Loading skeletons e toast notifications
+   - ✅ Integração com endpoint GET /api/projects/current/items?status=...
+   - ✅ View filtrada de project_item (sem tabela separada)
 
 ### 🚧 Pendente
 
-1. **Backlog** como entidade separada (atualmente sincroniza direto do Project)
-2. **Email** (convites e notificações)
-3. **Testes automatizados** (unitários e E2E)
+1. **Email** (convites e notificações)
+2. **Testes automatizados** (unitários e E2E)
 
 ### 📝 Decisões de Implementação
 

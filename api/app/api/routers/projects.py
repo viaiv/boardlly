@@ -83,20 +83,44 @@ async def get_current_project(
 
 @router.get("/current/items", response_model=list[ProjectItemResponse])
 async def list_current_project_items(
+    status: str | None = None,
+    iteration: str | None = None,
+    epic: str | None = None,
+    search: str | None = None,
     db: AsyncSession = Depends(deps.get_db),
     current_user: AppUser = Depends(deps.get_current_user),
 ) -> list[ProjectItemResponse]:
+    """
+    Lista itens do projeto atual com filtros opcionais.
+
+    **Filtros:**
+    - `status`: Filtrar por status (ex: "Backlog", "Todo", "In Progress", "Done")
+    - `iteration`: Filtrar por sprint/iteration
+    - `epic`: Filtrar por epic
+    - `search`: Buscar no título
+    """
     account = await _get_account_or_404(db, current_user)
     project = await _get_project_or_404(db, account)
-    stmt = (
-        select(ProjectItem)
-        .where(ProjectItem.project_id == project.id)
-        .order_by(
-            ProjectItem.start_date.asc().nulls_last(),
-            ProjectItem.end_date.asc().nulls_last(),
-            ProjectItem.updated_at.desc().nullslast(),
-        )
+
+    stmt = select(ProjectItem).where(ProjectItem.project_id == project.id)
+
+    # Aplicar filtros
+    if status:
+        stmt = stmt.where(ProjectItem.status == status)
+    if iteration:
+        stmt = stmt.where(ProjectItem.iteration == iteration)
+    if epic:
+        stmt = stmt.where(ProjectItem.epic == epic)
+    if search:
+        stmt = stmt.where(ProjectItem.title.ilike(f"%{search}%"))
+
+    # Ordenação
+    stmt = stmt.order_by(
+        ProjectItem.start_date.asc().nulls_last(),
+        ProjectItem.end_date.asc().nulls_last(),
+        ProjectItem.updated_at.desc().nullslast(),
     )
+
     result = await db.execute(stmt)
     items = result.scalars().all()
     return [ProjectItemResponse.model_validate(item) for item in items]
