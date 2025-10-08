@@ -50,13 +50,10 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       const data = await apiFetch<Project[]>("/api/projects");
       setProjects(data);
 
-      // Se não há projeto ativo ou o projeto ativo não existe mais, seleciona o primeiro
-      if (!activeProjectId || !data.some((p) => p.id === activeProjectId)) {
-        const firstProject = data[0];
-        if (firstProject) {
-          setActiveProjectId(firstProject.id);
-          localStorage.setItem(ACTIVE_PROJECT_KEY, String(firstProject.id));
-        }
+      // Se o projeto ativo não existe mais na lista, remove a seleção
+      if (activeProjectId && !data.some((p) => p.id === activeProjectId)) {
+        setActiveProjectId(null);
+        localStorage.removeItem(ACTIVE_PROJECT_KEY);
       }
 
       setStatus("ready");

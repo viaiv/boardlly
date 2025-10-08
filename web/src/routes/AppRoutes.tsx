@@ -10,6 +10,7 @@ import { Backlog } from "@/routes/Backlog";
 import { Sprints } from "@/routes/Sprints";
 import { Settings } from "@/routes/Settings";
 import { ProjectSettings } from "@/routes/ProjectSettings";
+import { ProjectSelection } from "@/routes/ProjectSelection";
 import { Login } from "@/routes/Login";
 import { Register } from "@/routes/Register";
 import { AccountSetup } from "@/routes/AccountSetup";
@@ -19,6 +20,7 @@ export function AppRoutes() {
     <Routes>
       <Route element={<AuthGuard />}>
         <Route path="/onboarding/account" element={<AccountSetup />} />
+        <Route path="/project-selection" element={<ProjectSelection />} />
         <Route element={<AppShell />}>
           <Route index element={<Overview />} />
           <Route path="roadmap" element={<Roadmap />} />
