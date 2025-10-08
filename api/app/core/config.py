@@ -24,6 +24,10 @@ class Settings(BaseSettings):
         default="",
         description="Chave base64 (32 bytes) usada para criptografar segredos",
     )
+    webhook_secret: str = Field(
+        default="",
+        description="Secret para validar webhooks do GitHub (HMAC SHA-256)",
+    )
     cors_origins: List[AnyUrl | str] = Field(
         default_factory=lambda: [
             "http://localhost:5173",

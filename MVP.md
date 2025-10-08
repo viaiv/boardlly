@@ -25,14 +25,22 @@ Gerar um **MVP** de um app web autenticado que exibe um **dashboard** de progres
    - ✅ Rastreamento de conversão (pending → approved → converted)
 7. **Epics** com custom fields e links
 8. **Sprints/Iterations** com planning e visualização
+9. **Sincronização Automática** (APScheduler):
+   - ✅ Job periódico a cada 15 minutos
+   - ✅ Sincroniza todos os projetos automaticamente
+   - ✅ Endpoint GET /api/github/scheduler/status
+10. **Webhooks do GitHub** 🔔:
+   - ✅ Endpoint POST /api/github/webhooks
+   - ✅ Validação HMAC-SHA256 de assinatura
+   - ✅ Eventos: project_v2_item, issues, pull_request
+   - ✅ Sincronização em tempo real
+   - ✅ Documentação completa (docs/WEBHOOKS.md)
 
 ### 🚧 Pendente
 
 1. **Backlog** como entidade separada (atualmente sincroniza direto do Project)
-2. **Webhooks** do GitHub (sincronização é via polling manual)
-3. **Sincronização automática** (cron job)
-4. **Email** (convites e notificações)
-5. **Testes automatizados** (unitários e E2E)
+2. **Email** (convites e notificações)
+3. **Testes automatizados** (unitários e E2E)
 
 ### 📝 Decisões de Implementação
 
