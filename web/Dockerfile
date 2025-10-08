@@ -1,15 +1,15 @@
 # Multi-stage build para otimizar tamanho da imagem
 
 # Stage 1: Build
-FROM node:20-alpine as builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
 # Copiar package files
 COPY package*.json ./
 
-# Instalar dependências
-RUN npm ci --only=production=false
+# Instalar dependências (incluindo devDependencies para build)
+RUN npm ci
 
 # Copiar código fonte
 COPY . .
