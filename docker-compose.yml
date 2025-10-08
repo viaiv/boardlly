@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: tactyo
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # API Backend
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      TACTYO_DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/tactyo
+      TACTYO_SESSION_SECRET: change-me-in-production
+      TACTYO_ENCRYPTION_KEY: your-base64-encoded-32-byte-key-change-me
+      TACTYO_DEBUG: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./api:/app
+    restart: unless-stopped
+
+  # Web Frontend
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
