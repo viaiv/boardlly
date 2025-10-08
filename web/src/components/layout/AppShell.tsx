@@ -1,4 +1,5 @@
-import { ReactNode, useMemo } from "react";
+import { useMemo } from "react";
+import type { ReactNode } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import { cn } from "@/lib/utils";

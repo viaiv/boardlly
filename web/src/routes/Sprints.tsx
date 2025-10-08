@@ -87,26 +87,29 @@ export function Sprints() {
     }
   }
 
-  function formatDate(dateString: string | null): string {
-    if (!dateString) return "Sem data";
-    const date = new Date(dateString);
-    return new Intl.DateTimeFormat("pt-BR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    }).format(date);
-  }
+  // TODO: Usar quando implementar formatação de datas
+  // function formatDate(dateString: string | null): string {
+  //   if (!dateString) return "Sem data";
+  //   const date = new Date(dateString);
+  //   return new Intl.DateTimeFormat("pt-BR", {
+  //     day: "2-digit",
+  //     month: "2-digit",
+  //     year: "numeric",
+  //   }).format(date);
+  // }
 
-  function calculateProgress(completed: number, total: number): number {
-    if (total === 0) return 0;
-    return Math.round((completed / total) * 100);
-  }
+  // TODO: Usar quando implementar cálculo de progresso
+  // function calculateProgress(completed: number, total: number): number {
+  //   if (total === 0) return 0;
+  //   return Math.round((completed / total) * 100);
+  // }
 
-  function getProgressColor(progress: number): string {
-    if (progress >= 80) return "text-green-600";
-    if (progress >= 50) return "text-yellow-600";
-    return "text-red-600";
-  }
+  // TODO: Usar quando implementar indicador de progresso
+  // function getProgressColor(progress: number): string {
+  //   if (progress >= 80) return "text-green-600";
+  //   if (progress >= 50) return "text-yellow-600";
+  //   return "text-red-600";
+  // }
 
   function isActiveSprint(sprint: IterationSummary): boolean {
     if (!sprint.start_date || !sprint.end_date) return false;

@@ -1,13 +1,13 @@
 /* eslint-disable react-refresh/only-export-components */
 import {
   createContext,
-  ReactNode,
   useCallback,
   useContext,
   useEffect,
   useMemo,
   useState,
 } from "react";
+import type { ReactNode } from "react";
 import { apiFetch } from "./api";
 
 export type UserRole = "viewer" | "editor" | "pm" | "admin" | "owner";
@@ -76,7 +76,7 @@ export function useRequireRole(roles: UserRole[]) {
   if (!roles.length) {
     return true;
   }
-  return roles.includes(user.role);
+  return user ? roles.includes(user.role) : false;
 }
 
 export function mapToSessionUser(data: { [key: string]: unknown }): SessionUser {

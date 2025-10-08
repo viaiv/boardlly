@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { toast } from "sonner";
 import { ExternalLinkIcon, ChevronLeftIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { apiFetch } from "@/lib/api";
-import { useSession, useRequireRole } from "@/lib/session";
+import { useRequireRole } from "@/lib/session";
 
 type ChangeRequestDetail = {
   id: string;
@@ -62,8 +62,8 @@ const TYPE_LABELS: Record<string, string> = {
 
 export function RequestDetail() {
   const { requestId } = useParams<{ requestId: string }>();
-  const navigate = useNavigate();
-  const { user } = useSession();
+  // const navigate = useNavigate(); // TODO: Usar quando implementar navegação
+  // const { user } = useSession(); // TODO: Usar quando implementar permissões
   const canApprove = useRequireRole(["pm", "admin", "owner"]);
 
   const [request, setRequest] = useState<ChangeRequestDetail | null>(null);
@@ -394,7 +394,7 @@ export function RequestDetail() {
             {/* Rejeitar */}
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <Button variant="destructive">Rejeitar</Button>
+                <Button variant="secondary">Rejeitar</Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>

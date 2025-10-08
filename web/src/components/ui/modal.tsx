@@ -1,4 +1,5 @@
-import { PropsWithChildren, ReactNode, useEffect } from "react";
+import { useEffect } from "react";
+import type { PropsWithChildren, ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/utils";
