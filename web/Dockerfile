@@ -55,9 +55,9 @@ RUN echo 'server { \
 # Expor porta
 EXPOSE 80
 
-# Health check
+# Health check usando curl (mais confiável que wget)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
+    CMD curl -f http://127.0.0.1/ || exit 1
 
 # Iniciar nginx
 CMD ["nginx", "-g", "daemon off;"]
