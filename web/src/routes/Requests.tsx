@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api";
 
 type ChangeRequest = {
@@ -48,7 +50,11 @@ export function Requests() {
       const data = await apiFetch<ChangeRequest[]>(`/api/requests${params}`);
       setRequests(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao carregar solicitações");
+      const errorMessage = err instanceof Error ? err.message : "Erro ao carregar solicitações";
+      setError(errorMessage);
+      toast.error("Erro ao carregar solicitações", {
+        description: errorMessage,
+      });
     } finally {
       setLoading(false);
     }
@@ -114,8 +120,21 @@ export function Requests() {
 
       {/* Estado de carregamento */}
       {loading && (
-        <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-          Carregando solicitações...
+        <div className="space-y-2">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="p-4 border rounded-lg">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-5 w-3/4" />
+                  <Skeleton className="h-4 w-1/2" />
+                </div>
+                <div className="flex gap-2">
+                  <Skeleton className="h-6 w-20" />
+                  <Skeleton className="h-6 w-16" />
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 

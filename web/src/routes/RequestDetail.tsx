@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
+import { toast } from "sonner";
 import { ExternalLinkIcon, ChevronLeftIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -7,6 +8,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { apiFetch } from "@/lib/api";
 import { useSession, useRequireRole } from "@/lib/session";
 
@@ -57,15 +70,11 @@ export function RequestDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Estados para aprovação
-  const [showApproveForm, setShowApproveForm] = useState(false);
+  // Estados para aprovação/rejeição
   const [approving, setApproving] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
   const [createIssue, setCreateIssue] = useState(true);
   const [addToProject, setAddToProject] = useState(true);
-
-  // Estados para rejeição
-  const [showRejectForm, setShowRejectForm] = useState(false);
-  const [rejecting, setRejecting] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
 
   useEffect(() => {
@@ -103,11 +112,20 @@ export function RequestDetail() {
         }),
       });
 
+      toast.success("Solicitação aprovada com sucesso!", {
+        description: createIssue
+          ? "Issue criada no GitHub e adicionada ao projeto."
+          : "A solicitação foi aprovada.",
+      });
+
       // Recarregar dados
       await loadRequest();
-      setShowApproveForm(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao aprovar solicitação");
+      const errorMessage = err instanceof Error ? err.message : "Erro ao aprovar solicitação";
+      setError(errorMessage);
+      toast.error("Erro ao aprovar solicitação", {
+        description: errorMessage,
+      });
     } finally {
       setApproving(false);
     }
@@ -128,12 +146,19 @@ export function RequestDetail() {
         }),
       });
 
+      toast.success("Solicitação rejeitada", {
+        description: "A solicitação foi marcada como rejeitada.",
+      });
+
       // Recarregar dados
       await loadRequest();
-      setShowRejectForm(false);
       setRejectReason("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao rejeitar solicitação");
+      const errorMessage = err instanceof Error ? err.message : "Erro ao rejeitar solicitação";
+      setError(errorMessage);
+      toast.error("Erro ao rejeitar solicitação", {
+        description: errorMessage,
+      });
     } finally {
       setRejecting(false);
     }
@@ -153,10 +178,32 @@ export function RequestDetail() {
 
   if (loading) {
     return (
-      <div className="space-y-4">
-        <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-          Carregando solicitação...
+      <div className="space-y-6 max-w-4xl">
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-32" />
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-8 w-3/4" />
+              <Skeleton className="h-4 w-1/2" />
+            </div>
+            <div className="flex gap-2">
+              <Skeleton className="h-6 w-24" />
+              <Skeleton className="h-6 w-20" />
+            </div>
+          </div>
         </div>
+        <Card>
+          <CardHeader>
+            <Skeleton className="h-6 w-48" />
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-16" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-full" />
+            </div>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -290,71 +337,74 @@ export function RequestDetail() {
               Aprovar ou rejeitar esta solicitação
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            {!showApproveForm && !showRejectForm && (
-              <div className="flex gap-3">
-                <Button onClick={() => setShowApproveForm(true)}>Aprovar</Button>
-                <Button variant="destructive" onClick={() => setShowRejectForm(true)}>
-                  Rejeitar
-                </Button>
-              </div>
-            )}
+          <CardContent className="flex gap-3">
+            {/* Aprovar */}
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button>Aprovar</Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Aprovar Solicitação</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Esta ação aprovará a solicitação e poderá criar uma Issue no GitHub.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
 
-            {/* Formulário de Aprovação */}
-            {showApproveForm && (
-              <div className="space-y-4 p-4 border rounded-lg bg-secondary/10">
-                <h3 className="font-medium">Aprovar Solicitação</h3>
+                <div className="space-y-4 py-4">
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="approve-create-issue"
+                      checked={createIssue}
+                      onCheckedChange={(checked) => setCreateIssue(checked === true)}
+                    />
+                    <label
+                      htmlFor="approve-create-issue"
+                      className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                    >
+                      Criar Issue no GitHub
+                    </label>
+                  </div>
 
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="create-issue"
-                    checked={createIssue}
-                    onCheckedChange={(checked) => setCreateIssue(checked === true)}
-                  />
-                  <label
-                    htmlFor="create-issue"
-                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                  >
-                    Criar Issue no GitHub
-                  </label>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="approve-add-to-project"
+                      checked={addToProject}
+                      onCheckedChange={(checked) => setAddToProject(checked === true)}
+                      disabled={!createIssue}
+                    />
+                    <label
+                      htmlFor="approve-add-to-project"
+                      className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                    >
+                      Adicionar ao Project
+                    </label>
+                  </div>
                 </div>
 
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="add-to-project"
-                    checked={addToProject}
-                    onCheckedChange={(checked) => setAddToProject(checked === true)}
-                    disabled={!createIssue}
-                  />
-                  <label
-                    htmlFor="add-to-project"
-                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                  >
-                    Adicionar ao Project
-                  </label>
-                </div>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={approving}>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleApprove} disabled={approving}>
+                    {approving ? "Aprovando..." : "Confirmar"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
 
-                <div className="flex gap-3 pt-2">
-                  <Button onClick={handleApprove} disabled={approving}>
-                    {approving ? "Aprovando..." : "Confirmar Aprovação"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => setShowApproveForm(false)}
-                    disabled={approving}
-                  >
-                    Cancelar
-                  </Button>
-                </div>
-              </div>
-            )}
+            {/* Rejeitar */}
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="destructive">Rejeitar</Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Rejeitar Solicitação</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Esta ação marcará a solicitação como rejeitada.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
 
-            {/* Formulário de Rejeição */}
-            {showRejectForm && (
-              <div className="space-y-4 p-4 border rounded-lg bg-destructive/5">
-                <h3 className="font-medium">Rejeitar Solicitação</h3>
-
-                <div className="space-y-2">
+                <div className="space-y-2 py-4">
                   <Label htmlFor="reject-reason">Motivo da Rejeição (opcional)</Label>
                   <Textarea
                     id="reject-reason"
@@ -365,23 +415,16 @@ export function RequestDetail() {
                   />
                 </div>
 
-                <div className="flex gap-3 pt-2">
-                  <Button variant="destructive" onClick={handleReject} disabled={rejecting}>
-                    {rejecting ? "Rejeitando..." : "Confirmar Rejeição"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setShowRejectForm(false);
-                      setRejectReason("");
-                    }}
-                    disabled={rejecting}
-                  >
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={rejecting} onClick={() => setRejectReason("")}>
                     Cancelar
-                  </Button>
-                </div>
-              </div>
-            )}
+                  </AlertDialogCancel>
+                  <AlertDialogAction onClick={handleReject} disabled={rejecting}>
+                    {rejecting ? "Rejeitando..." : "Confirmar"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </CardContent>
         </Card>
       )}

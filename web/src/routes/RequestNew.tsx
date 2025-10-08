@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -62,10 +63,18 @@ export function RequestNew() {
         body: JSON.stringify(payload),
       });
 
+      toast.success("Solicitação criada com sucesso!", {
+        description: "Aguarde aprovação do PM para conversão em Issue.",
+      });
+
       // Redirecionar para a página de detalhes
       navigate(`/requests/${response.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao criar solicitação");
+      const errorMessage = err instanceof Error ? err.message : "Erro ao criar solicitação";
+      setError(errorMessage);
+      toast.error("Erro ao criar solicitação", {
+        description: errorMessage,
+      });
     } finally {
       setLoading(false);
     }
