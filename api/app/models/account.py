@@ -40,3 +40,6 @@ class Account(Base):
     projects: Mapped[list["GithubProject"]] = relationship(
         "GithubProject", back_populates="account", cascade="all, delete-orphan"
     )
+    change_requests: Mapped[list["ChangeRequest"]] = relationship(
+        "ChangeRequest", back_populates="account", cascade="all, delete-orphan"
+    )

@@ -37,3 +37,14 @@ class AppUser(Base):
         back_populates="users",
         foreign_keys=[account_id],
     )
+    created_requests: Mapped[list["ChangeRequest"]] = relationship(
+        "ChangeRequest",
+        back_populates="creator",
+        foreign_keys="ChangeRequest.created_by",
+        cascade="all, delete-orphan",
+    )
+    reviewed_requests: Mapped[list["ChangeRequest"]] = relationship(
+        "ChangeRequest",
+        back_populates="reviewer",
+        foreign_keys="ChangeRequest.reviewed_by",
+    )

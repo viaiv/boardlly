@@ -5,3 +5,4 @@ from .github_project import GithubProject  # noqa: F401
 from .github_project_field import GithubProjectField  # noqa: F401
 from .project_item import ProjectItem  # noqa: F401
 from .iteration_snapshot import IterationSnapshot  # noqa: F401
+from .change_request import ChangeRequest  # noqa: F401
