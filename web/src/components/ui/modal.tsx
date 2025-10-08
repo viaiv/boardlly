@@ -57,7 +57,7 @@ export function Modal({
 
   const content = (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background p-4"
       onMouseDown={onClose}
       role="presentation"
     >
@@ -87,12 +87,12 @@ export function Modal({
           </header>
           <div className="max-h-[70vh] overflow-y-auto pr-1 text-sm">{children}</div>
         </div>
-        <div className="flex items-center justify-end gap-2 border-t border-border bg-muted/20 px-6 py-3">
+        <div className="flex items-center justify-end gap-2 border-t border-border bg-muted px-6 py-3">
           {footer}
         </div>
         <button
           type="button"
-          className="absolute right-4 top-4 rounded-md border border-border/60 bg-background px-2 py-1 text-xs font-medium text-muted-foreground transition hover:bg-muted"
+          className="absolute right-4 top-4 rounded-md border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground transition hover:bg-muted"
           onClick={onClose}
         >
           Fechar

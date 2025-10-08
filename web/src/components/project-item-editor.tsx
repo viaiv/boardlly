@@ -392,7 +392,7 @@ export function ProjectItemEditor({
         ) : null}
 
         {!canEdit ? (
-          <p className="rounded-md border border-border/60 bg-muted/40 p-2 text-xs text-muted-foreground">
+          <p className="rounded-md border border-border bg-muted p-2 text-xs text-muted-foreground">
             Você não possui permissão para editar este item, mas pode visualizar os dados sincronizados do GitHub.
           </p>
         ) : null}
@@ -424,7 +424,7 @@ export function ProjectItemEditor({
           {!detailsLoading && !detailsError ? (
             <>
               {description ? (
-                <div className="rounded-md border border-border/60 bg-muted/30 p-3 text-sm text-foreground whitespace-pre-wrap">
+                <div className="rounded-md border border-border bg-muted p-3 text-sm text-foreground whitespace-pre-wrap">
                   {description}
                 </div>
               ) : (
@@ -498,13 +498,13 @@ export function ProjectItemEditor({
                   {detailLabels.map((label) => (
                     <span
                       key={label.name}
-                      className="rounded-full border border-border/60 px-2 py-0.5 text-xs"
+                      className="rounded-full border border-border px-2 py-0.5 text-xs"
                       style={
                         label.color
                           ? {
-                              backgroundColor: `#${label.color}20`,
+                              backgroundColor: `#${label.color}`,
                               borderColor: `#${label.color}`,
-                              color: `#${label.color}`,
+                              color: '#ffffff',
                             }
                           : undefined
                       }
@@ -551,12 +551,12 @@ export function ProjectItemEditor({
               <ul className="max-h-60 space-y-2 overflow-y-auto pr-1 text-sm">
                 {sortedComments.map((comment) => (
                   <li key={comment.id}>
-                    <details className="group rounded-md border border-border/60 bg-muted/20 p-3">
+                    <details className="group rounded-md border border-border bg-muted p-3">
                       <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-[11px] font-semibold uppercase text-muted-foreground transition group-open:text-foreground">
                         <span>{comment.author ?? "Usuário desconhecido"}</span>
                         <span>{formatDateDisplay(comment.created_at) ?? "—"}</span>
                       </summary>
-                      <div className="mt-3 space-y-2 border-t border-border/60 pt-3">
+                      <div className="mt-3 space-y-2 border-t border-border pt-3">
                         <p className="whitespace-pre-line text-sm text-foreground">{comment.body}</p>
                         {comment.url ? (
                           <a
