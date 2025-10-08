@@ -36,6 +36,10 @@ ENV PATH=/root/.local/bin:$PATH
 # Copiar código da aplicação
 COPY . .
 
+# Copiar e dar permissão ao entrypoint
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 # Criar diretório para SQLite (fallback)
 RUN mkdir -p /app/data
 
@@ -57,5 +61,5 @@ ENV TACTYO_DEBUG=false \
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD python -c "import httpx; httpx.get('http://localhost:8000/')" || exit 1
 
-# Comando para iniciar a aplicação
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Comando para iniciar a aplicação (com migrations automáticas)
+CMD ["/app/entrypoint.sh"]
