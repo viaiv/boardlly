@@ -1,8 +1,9 @@
+import os
 from functools import lru_cache
-from typing import List
+from typing import Any, List, Tuple
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -12,6 +13,45 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> Tuple[PydanticBaseSettingsSource, ...]:
+        """Customiza sources para mapear TACTYO_CORS_ORIGINS para cors_origins_str."""
+
+        # Cria uma custom source que mapeia TACTYO_CORS_ORIGINS
+        class CorsOriginsMappingSource(PydanticBaseSettingsSource):
+            def get_field_value(self, field_name: str, field_info: Any) -> Tuple[Any, str, bool]:
+                if field_name == "cors_origins_str":
+                    # Procura por TACTYO_CORS_ORIGINS primeiro
+                    value = os.environ.get("TACTYO_CORS_ORIGINS")
+                    if value is not None:
+                        return value, "cors_origins", True
+                return None, "", False
+
+            def __call__(self) -> dict[str, Any]:
+                d: dict[str, Any] = {}
+                for field_name in self.settings_cls.model_fields:
+                    field_value, field_key, value_is_complex = self.get_field_value(
+                        field_name, self.settings_cls.model_fields[field_name]
+                    )
+                    if field_key:
+                        d[field_name] = field_value
+                return d
+
+        return (
+            init_settings,
+            CorsOriginsMappingSource(settings_cls),
+            env_settings,
+            dotenv_settings,
+            file_secret_settings,
+        )
 
     app_name: str = "Tactyo API"
     environment: str = Field(default="development")
@@ -28,11 +68,12 @@ class Settings(BaseSettings):
         default="",
         description="Secret para validar webhooks do GitHub (HMAC SHA-256)",
     )
-    cors_origins: List[str] = Field(
-        default_factory=lambda: [
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-        ]
+    # CORS origins como string para evitar parse automático de JSON
+    # Use TACTYO_CORS_ORIGINS para definir (aceita string separada por vírgulas)
+    # A property cors_origins retorna como lista
+    # Mapeamento de TACTYO_CORS_ORIGINS para cors_origins_str é feito no custom settings source
+    cors_origins_str: str = Field(
+        default="http://localhost:5173,http://127.0.0.1:5173"
     )
     enable_cors: bool = Field(default=True)
 
@@ -41,37 +82,20 @@ class Settings(BaseSettings):
     session_cookie_name: str = Field(default="tactyo_session")
     session_max_age_seconds: int = Field(default=60 * 60 * 24 * 7)
 
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def parse_cors_origins(cls, value) -> List[str]:
-        """Parse CORS origins from string or list.
-
-        Aceita:
-        - None ou string vazia -> retorna lista padrão
-        - String separada por vírgulas -> converte para lista
-        - Lista -> retorna como está
-        """
-        # Se for None, string vazia, ou "null"
-        if value is None or value == "" or value == "null":
+    @property
+    def cors_origins(self) -> List[str]:
+        """Retorna CORS origins como lista de strings."""
+        value = self.cors_origins_str
+        # Se for string vazia ou "null", retorna lista padrão
+        if not value or value == "null":
             return [
                 "http://localhost:5173",
                 "http://127.0.0.1:5173",
             ]
-
-        # Se for string, divide por vírgula
-        if isinstance(value, str):
-            origins = [origin.strip() for origin in value.split(",") if origin.strip()]
-            return origins if origins else [
-                "http://localhost:5173",
-                "http://127.0.0.1:5173",
-            ]
-
-        # Se já for lista, retorna como está
-        if isinstance(value, list):
-            return value
-
-        # Fallback para lista padrão
-        return [
+        # Divide por vírgula e remove espaços
+        origins = [origin.strip() for origin in value.split(",") if origin.strip()]
+        # Se resultou em lista vazia, retorna padrão
+        return origins if origins else [
             "http://localhost:5173",
             "http://127.0.0.1:5173",
         ]
