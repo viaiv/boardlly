@@ -3,11 +3,13 @@ from __future__ import annotations
 from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
 from app.models.account import Account
 from app.models.account_github_credentials import AccountGithubCredentials
+from app.models.project_member import ProjectMember
 from app.models.user import AppUser
 from app.schemas.github import (
     GithubProjectRequest,
@@ -73,6 +75,23 @@ async def configure_github_project(
         metadata = await fetch_project_metadata(client, payload.owner, payload.project_number)
 
     project = await upsert_github_project(db, account, metadata)
+
+    # Adicionar owner como admin do projeto automaticamente (se ainda não for membro)
+    stmt = select(ProjectMember).where(
+        ProjectMember.user_id == current_user.id,
+        ProjectMember.project_id == project.id
+    )
+    result = await db.execute(stmt)
+    existing_member = result.scalar_one_or_none()
+
+    if not existing_member:
+        owner_member = ProjectMember(
+            user_id=current_user.id,
+            project_id=project.id,
+            role="admin"
+        )
+        db.add(owner_member)
+
     await db.commit()
     await db.refresh(project)
 
