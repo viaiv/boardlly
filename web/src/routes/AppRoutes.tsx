@@ -9,6 +9,7 @@ import { RequestDetail } from "@/routes/RequestDetail";
 import { Backlog } from "@/routes/Backlog";
 import { Sprints } from "@/routes/Sprints";
 import { Settings } from "@/routes/Settings";
+import { ProjectSettings } from "@/routes/ProjectSettings";
 import { Team } from "@/routes/Team";
 import { Login } from "@/routes/Login";
 import { Register } from "@/routes/Register";
@@ -30,6 +31,7 @@ export function AppRoutes() {
           <Route path="sprints" element={<Sprints />} />
           <Route path="team" element={<Team />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="settings/projects/:projectId" element={<ProjectSettings />} />
         </Route>
       </Route>
       <Route path="/login" element={<Login />} />
