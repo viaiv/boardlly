@@ -32,11 +32,8 @@ export function AppShell({ headerActions }: { headerActions?: ReactNode }) {
   };
 
   const navigation = useMemo(() => {
-    if (user?.role === "admin" || user?.role === "owner") {
-      return [...baseNavigation, { to: "/team", label: "Time" }];
-    }
     return baseNavigation;
-  }, [user?.role]);
+  }, []);
 
   const activeLabel = useMemo(() => {
     // Check settings first (not in main navigation)
