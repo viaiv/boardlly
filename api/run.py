@@ -33,7 +33,7 @@ REQUIRED_PACKAGES: Iterable[str] = (
     "pydantic_settings",
 )
 
-logger = logging.getLogger("boardlly.run")
+logger = logging.getLogger("tactyo.run")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 
