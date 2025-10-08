@@ -21,12 +21,18 @@ type ProjectItem = {
   status: string | null;
   epic: string | null;
   iteration: string | null;
+  iteration_id: string | null;
   estimate: number | null;
   assignees: string[];
   url: string | null;
   content_type: string | null;
   content_node_id: string | null;
   updated_at: string;
+};
+
+type SprintOption = {
+  id: string;
+  name: string;
 };
 
 export function Backlog() {
@@ -42,8 +48,13 @@ export function Backlog() {
   // Epics disponíveis (extraídos dos items)
   const [availableEpics, setAvailableEpics] = useState<string[]>([]);
 
+  // Sprints disponíveis
+  const [availableSprints, setAvailableSprints] = useState<SprintOption[]>([]);
+  const [updatingItem, setUpdatingItem] = useState<number | null>(null);
+
   useEffect(() => {
     loadItems();
+    loadSprints();
   }, [statusFilter]);
 
   async function loadItems() {
@@ -80,6 +91,44 @@ export function Backlog() {
       });
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadSprints() {
+    try {
+      const response = await apiFetch<{ options: SprintOption[] }>(
+        "/api/projects/current/iterations/dashboard"
+      );
+      setAvailableSprints(response.options || []);
+    } catch (err) {
+      console.error("Erro ao carregar sprints:", err);
+    }
+  }
+
+  async function updateItemSprint(itemId: number, sprintId: string | null) {
+    try {
+      setUpdatingItem(itemId);
+
+      await apiFetch(`/api/projects/current/items/${itemId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          iteration_id: sprintId || "",
+        }),
+      });
+
+      toast.success("Sprint atualizada com sucesso!");
+
+      // Recarregar items
+      await loadItems();
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error ? err.message : "Erro ao atualizar sprint";
+      toast.error("Erro ao atualizar sprint", {
+        description: errorMessage,
+      });
+    } finally {
+      setUpdatingItem(null);
     }
   }
 
@@ -263,7 +312,7 @@ export function Backlog() {
                             </a>
                           )}
                         </div>
-                        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground mb-3">
                           <Badge variant="outline">{getItemTypeLabel(item.content_type)}</Badge>
                           {item.status && <Badge variant="secondary">{item.status}</Badge>}
                           {item.estimate && (
@@ -272,6 +321,29 @@ export function Backlog() {
                           {item.assignees.length > 0 && (
                             <span>👤 {item.assignees.join(", ")}</span>
                           )}
+                        </div>
+                        {/* Sprint selector */}
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">Sprint:</span>
+                          <Select
+                            value={item.iteration_id || "none"}
+                            onValueChange={(value) =>
+                              updateItemSprint(item.id, value === "none" ? null : value)
+                            }
+                            disabled={updatingItem === item.id}
+                          >
+                            <SelectTrigger className="w-[180px] h-8">
+                              <SelectValue placeholder="Selecione sprint" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">Sem sprint</SelectItem>
+                              {availableSprints.map((sprint) => (
+                                <SelectItem key={sprint.id} value={sprint.id}>
+                                  {sprint.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
                       </div>
                       <div className="text-xs text-muted-foreground whitespace-nowrap">
@@ -312,7 +384,7 @@ export function Backlog() {
                             </a>
                           )}
                         </div>
-                        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground mb-3">
                           <Badge variant="outline">{getItemTypeLabel(item.content_type)}</Badge>
                           {item.status && <Badge variant="secondary">{item.status}</Badge>}
                           {item.estimate && (
@@ -321,6 +393,29 @@ export function Backlog() {
                           {item.assignees.length > 0 && (
                             <span>👤 {item.assignees.join(", ")}</span>
                           )}
+                        </div>
+                        {/* Sprint selector */}
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">Sprint:</span>
+                          <Select
+                            value={item.iteration_id || "none"}
+                            onValueChange={(value) =>
+                              updateItemSprint(item.id, value === "none" ? null : value)
+                            }
+                            disabled={updatingItem === item.id}
+                          >
+                            <SelectTrigger className="w-[180px] h-8">
+                              <SelectValue placeholder="Selecione sprint" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">Sem sprint</SelectItem>
+                              {availableSprints.map((sprint) => (
+                                <SelectItem key={sprint.id} value={sprint.id}>
+                                  {sprint.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
                       </div>
                       <div className="text-xs text-muted-foreground whitespace-nowrap">

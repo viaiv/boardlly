@@ -42,6 +42,29 @@ Gerar um **MVP** de um app web autenticado que exibe um **dashboard** de progres
    - ✅ Loading skeletons e toast notifications
    - ✅ Integração com endpoint GET /api/projects/current/items?status=...
    - ✅ View filtrada de project_item (sem tabela separada)
+12. **Sprints Dashboard** 🏃:
+   - ✅ Página /sprints com visualização de todas as iterações
+   - ✅ Cards de métricas por sprint (progresso, velocity, concluídos)
+   - ✅ Identificação de sprints ativas (dentro do período)
+   - ✅ Breakdown de status por sprint
+   - ✅ Progress bar visual com cálculo de porcentagem
+   - ✅ Estimativas e pontos completados
+   - ✅ Seção para itens sem sprint alocada
+13. **Sprint Management** 🎯:
+   - ✅ Endpoint PATCH /api/projects/current/items/{id}
+   - ✅ Dropdown de seleção de sprint na página Backlog
+   - ✅ Alocação de itens a sprints com atualização no GitHub
+   - ✅ Atualização automática de iteration_id nos items via GraphQL
+   - ℹ️ **Limitação da API do GitHub**: Criação de sprints deve ser feita pela UI do GitHub Projects (não há API pública para isso)
+   - ✅ Instruções claras na página Sprints sobre como criar iterations no GitHub
+14. **Project Setup Automation** 🔧:
+   - ✅ Endpoint GET /api/projects/current/setup/status (checklist de campos)
+   - ✅ Endpoint POST /api/projects/current/setup (criação automática)
+   - ✅ Mutation createProjectV2Field para Iteration, Epic, Estimate
+   - ✅ Verificação automática de campos obrigatórios vs opcionais
+   - ✅ UI com checklist visual na página Settings
+   - ✅ Botão de configuração automática com toast de feedback
+   - ✅ Criação de campos com opções padrão (Epic: Feature, Bug Fix, Tech Debt)
 
 ### 🚧 Pendente
 

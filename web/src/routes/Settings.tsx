@@ -14,6 +14,8 @@ import {
 import { Modal } from "@/components/ui/modal";
 import { apiFetch } from "@/lib/api";
 import { useSession } from "@/lib/session";
+import { CheckCircle2, Circle, AlertCircle, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
 interface ProjectInfo {
   id: number;
@@ -83,6 +85,11 @@ export function Settings() {
   const [newEpicRepository, setNewEpicRepository] = useState("");
   const [newEpicCategory, setNewEpicCategory] = useState<string>("");
   const [epicOptions, setEpicOptions] = useState<Array<{ id: string; name: string }>>([]);
+
+  // Setup do Projeto
+  const [setupStatus, setSetupStatus] = useState<Record<string, any> | null>(null);
+  const [isLoadingSetup, setIsLoadingSetup] = useState(false);
+  const [isRunningSetup, setIsRunningSetup] = useState(false);
 
   const canManageSettings = user?.role === "owner" || user?.role === "admin";
 
@@ -345,6 +352,57 @@ export function Settings() {
     }
   };
 
+  const loadSetupStatus = async () => {
+    if (!projectInfo) return;
+
+    try {
+      setIsLoadingSetup(true);
+      const status = await apiFetch<Record<string, any>>("/api/projects/current/setup/status");
+      setSetupStatus(status);
+    } catch (err) {
+      console.error("Erro ao carregar status do setup:", err);
+    } finally {
+      setIsLoadingSetup(false);
+    }
+  };
+
+  const runSetup = async () => {
+    try {
+      setIsRunningSetup(true);
+
+      const report = await apiFetch<Record<string, any>>("/api/projects/current/setup", {
+        method: "POST",
+      });
+
+      const createdFields = Object.entries(report)
+        .filter(([_, value]: [string, any]) => value.created)
+        .map(([key]) => key);
+
+      if (createdFields.length > 0) {
+        toast.success(`Campos criados: ${createdFields.join(", ")}`);
+      } else {
+        toast.info("Todos os campos já estavam configurados");
+      }
+
+      // Recarregar status
+      await loadSetupStatus();
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Erro ao executar setup";
+      toast.error("Erro ao executar setup", {
+        description: errorMessage,
+      });
+    } finally {
+      setIsRunningSetup(false);
+    }
+  };
+
+  // Carregar setup status quando projeto estiver carregado
+  useEffect(() => {
+    if (projectInfo) {
+      loadSetupStatus();
+    }
+  }, [projectInfo]);
+
   if (!canManageSettings) {
     return (
       <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
@@ -580,6 +638,83 @@ export function Settings() {
               <Button onClick={handleOpenEpicManager}>
                 Gerenciar épicos
               </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="lg:col-span-2">
+            <CardHeader>
+              <CardTitle>Setup do Projeto</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Verifique e configure automaticamente os campos necessários no GitHub Project.
+              </p>
+
+              {isLoadingSetup ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Verificando configuração...</span>
+                </div>
+              ) : setupStatus ? (
+                <div className="space-y-3">
+                  {Object.entries(setupStatus).map(([key, value]: [string, any]) => (
+                    <div key={key} className="flex items-start gap-3 p-3 rounded-lg border">
+                      <div className="flex-shrink-0 mt-0.5">
+                        {value.exists ? (
+                          <CheckCircle2 className="h-5 w-5 text-green-600" />
+                        ) : value.required ? (
+                          <AlertCircle className="h-5 w-5 text-yellow-600" />
+                        ) : (
+                          <Circle className="h-5 w-5 text-muted-foreground" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium capitalize">{key}</p>
+                          {value.required && (
+                            <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-800 rounded">
+                              Obrigatório
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          {value.description}
+                        </p>
+                        <p className="text-xs mt-1">
+                          {value.exists ? (
+                            <span className="text-green-600">✓ Configurado</span>
+                          ) : (
+                            <span className="text-muted-foreground">Não configurado</span>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+
+                  <div className="pt-2">
+                    <Button
+                      onClick={runSetup}
+                      disabled={isRunningSetup || (setupStatus && Object.values(setupStatus).every((v: any) => v.exists))}
+                    >
+                      {isRunningSetup ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Configurando...
+                        </>
+                      ) : (
+                        "Configurar campos automaticamente"
+                      )}
+                    </Button>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Este processo criará automaticamente os campos faltantes no seu GitHub Project.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Configure um projeto primeiro para verificar o status dos campos.
+                </p>
+              )}
             </CardContent>
           </Card>
         </div>

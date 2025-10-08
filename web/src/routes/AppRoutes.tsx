@@ -7,6 +7,7 @@ import { Requests } from "@/routes/Requests";
 import { RequestNew } from "@/routes/RequestNew";
 import { RequestDetail } from "@/routes/RequestDetail";
 import { Backlog } from "@/routes/Backlog";
+import { Sprints } from "@/routes/Sprints";
 import { Settings } from "@/routes/Settings";
 import { Team } from "@/routes/Team";
 import { Login } from "@/routes/Login";
@@ -26,6 +27,7 @@ export function AppRoutes() {
           <Route path="requests/new" element={<RequestNew />} />
           <Route path="requests/:requestId" element={<RequestDetail />} />
           <Route path="backlog" element={<Backlog />} />
+          <Route path="sprints" element={<Sprints />} />
           <Route path="team" element={<Team />} />
           <Route path="settings" element={<Settings />} />
         </Route>

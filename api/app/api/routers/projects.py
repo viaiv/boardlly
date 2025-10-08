@@ -45,9 +45,11 @@ from app.services.github import (
     list_epic_options,
     create_epic_option,
     update_epic_option,
+    update_item_iteration,
     delete_epic_option,
     list_iteration_options,
     parse_datetime,
+    setup_project_fields,
 )
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -332,6 +334,133 @@ def _safe_float(value: Any) -> float:
         return 0.0
 
 
+@router.get("/current/setup/status")
+async def get_setup_status(
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: AppUser = Depends(deps.get_current_user),
+) -> dict[str, Any]:
+    """
+    Verifica quais campos necessários estão configurados no projeto.
+
+    **Response:**
+    ```json
+    {
+      "iteration": {"exists": true, "required": true},
+      "epic": {"exists": false, "required": false},
+      "estimate": {"exists": true, "required": false},
+      "status": {"exists": true, "required": true}
+    }
+    ```
+    """
+    from app.services.github import (
+        _load_project_fields,
+        _resolve_iteration_field_from_collection,
+        _resolve_epic_field_from_collection,
+    )
+
+    account = await _get_account_or_404(db, current_user)
+    project = await _get_project_or_404(db, account)
+
+    # Carregar campos atuais
+    fields = await _load_project_fields(db, project.id)
+
+    status = {
+        "iteration": {"exists": False, "required": True, "description": "Campo para gerenciar sprints"},
+        "epic": {"exists": False, "required": False, "description": "Campo para agrupar issues por épico"},
+        "estimate": {"exists": False, "required": False, "description": "Campo para story points"},
+        "status": {"exists": False, "required": True, "description": "Campo de status do item"},
+    }
+
+    # Verificar campos existentes
+    iteration_field = _resolve_iteration_field_from_collection(fields)
+    epic_field = _resolve_epic_field_from_collection(list(fields))
+
+    status["iteration"]["exists"] = iteration_field is not None
+    status["epic"]["exists"] = epic_field is not None
+
+    # Verificar Status e Estimate
+    for field in fields:
+        field_name_lower = (field.field_name or "").lower()
+        field_type_lower = (field.field_type or "").lower()
+
+        if field_name_lower == "status" or "status" in field_type_lower:
+            status["status"]["exists"] = True
+
+        if field_name_lower in ["estimate", "story points", "points"]:
+            status["estimate"]["exists"] = True
+
+    return status
+
+
+@router.post("/current/setup")
+async def run_project_setup(
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: AppUser = Depends(deps.require_roles("admin", "owner")),
+) -> dict[str, Any]:
+    """
+    Executa setup automático do projeto, criando campos necessários.
+
+    **Permissão:** admin, owner
+
+    **Campos criados (se não existirem):**
+    - Iteration: Campo para gerenciar sprints
+    - Epic: Campo Single Select com opções padrão (Feature, Bug Fix, Tech Debt)
+    - Estimate: Campo numérico para story points
+
+    **Response:**
+    ```json
+    {
+      "iteration": {"exists": false, "created": true},
+      "epic": {"exists": false, "created": true},
+      "estimate": {"exists": false, "created": true},
+      "status": {"exists": true, "created": false}
+    }
+    ```
+    """
+    account = await _get_account_or_404(db, current_user)
+    project = await _get_project_or_404(db, account)
+
+    report = await setup_project_fields(db, account, project)
+
+    await db.commit()
+
+    return report
+
+
+@router.get("/current/fields")
+async def list_project_fields(
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: AppUser = Depends(deps.get_current_user),
+) -> dict[str, Any]:
+    """
+    Lista todos os campos do projeto para debug.
+    Útil para verificar se o campo Iteration está configurado.
+    """
+    account = await _get_account_or_404(db, current_user)
+    project = await _get_project_or_404(db, account)
+
+    stmt = select(GithubProjectField).where(GithubProjectField.project_id == project.id)
+    result = await db.execute(stmt)
+    fields = result.scalars().all()
+
+    return {
+        "project_id": project.id,
+        "project_node_id": project.project_node_id,
+        "total_fields": len(fields),
+        "fields": [
+            {
+                "id": field.id,
+                "field_id": field.field_id,
+                "field_name": field.field_name,
+                "field_type": field.field_type,
+                "data_type": field.data_type,
+                "options": field.options if hasattr(field, "options") else None,
+            }
+            for field in fields
+        ],
+    }
+
+
 @router.get("/current/iterations/dashboard", response_model=IterationDashboardResponse)
 async def get_iteration_dashboard(
     db: AsyncSession = Depends(deps.get_db),
@@ -368,6 +497,80 @@ async def get_iteration_dashboard(
     ]
 
     return IterationDashboardResponse(summaries=summaries, options=option_responses)
+
+
+@router.patch("/current/items/{item_id}", response_model=ProjectItemResponse)
+async def update_project_item(
+    item_id: int,
+    request_data: ProjectItemUpdateRequest,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: AppUser = Depends(deps.require_roles("pm", "admin", "owner")),
+) -> ProjectItemResponse:
+    """
+    Atualiza um item do projeto (issue/PR/draft).
+
+    **Permissão:** pm, admin, owner
+
+    **Campos atualizáveis:**
+    - `iteration_id`: ID da sprint/iteration (ou null para remover)
+    - `status`: Status do item
+    - `epic_option_id`: ID do epic
+    - `start_date`, `end_date`, `due_date`: Datas customizadas
+
+    **Exemplo de Request:**
+    ```json
+    {
+      "iteration_id": "PVTIF_lADOBz...",
+      "status": "In Progress"
+    }
+    ```
+    """
+    account = await _get_account_or_404(db, current_user)
+    project = await _get_project_or_404(db, account)
+
+    item = await db.get(ProjectItem, item_id)
+    if not item or item.project_id != project.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Item não encontrado")
+
+    # Atualizar iteration se fornecida
+    if hasattr(request_data, "iteration_id") and request_data.iteration_id is not None:
+        item = await update_item_iteration(
+            db,
+            account,
+            project,
+            item,
+            request_data.iteration_id if request_data.iteration_id else None,
+        )
+
+    # Aplicar outras atualizações (status, datas, etc)
+    updates = {}
+    if request_data.status is not None:
+        updates["status"] = request_data.status
+    if request_data.start_date is not None:
+        updates["start_date"] = request_data.start_date
+    if request_data.end_date is not None:
+        updates["end_date"] = request_data.end_date
+    if request_data.due_date is not None:
+        updates["due_date"] = request_data.due_date
+    if request_data.epic_option_id is not None:
+        updates["epic_option_id"] = request_data.epic_option_id
+    if request_data.epic_name is not None:
+        updates["epic_name"] = request_data.epic_name
+
+    if updates:
+        item = await apply_local_project_item_updates(
+            db,
+            account,
+            project,
+            item,
+            updates,
+            current_user.id,
+        )
+
+    await db.commit()
+    await db.refresh(item)
+
+    return ProjectItemResponse.model_validate(item)
 
 
 def _build_iteration_summaries(

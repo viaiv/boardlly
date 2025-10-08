@@ -15,6 +15,7 @@ import { apiFetch } from "@/lib/api";
 const baseNavigation = [
   { to: "/", label: "Overview" },
   { to: "/roadmap", label: "Roadmap" },
+  { to: "/sprints", label: "Sprints" },
   { to: "/requests", label: "Solicitações" },
   { to: "/backlog", label: "Backlog" },
   { to: "/settings", label: "Configurações" },
@@ -31,7 +32,7 @@ export function AppShell({ headerActions }: { headerActions?: ReactNode }) {
 
   const navigation = useMemo(() => {
     if (user?.role === "admin" || user?.role === "owner") {
-      return [...baseNavigation.slice(0, 4), { to: "/team", label: "Time" }, ...baseNavigation.slice(4)];
+      return [...baseNavigation.slice(0, 5), { to: "/team", label: "Time" }, ...baseNavigation.slice(5)];
     }
     return baseNavigation;
   }, [user?.role]);

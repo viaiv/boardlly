@@ -1187,6 +1187,369 @@ async def delete_epic_option(
         await _refresh_epic_field_cache(client, db, project)
 
 
+async def _create_iteration_field(
+    client: GithubGraphQLClient,
+    project_node_id: str,
+    field_name: str = "Iteration",
+) -> dict[str, Any]:
+    """
+    Cria um novo campo Iteration no projeto do GitHub.
+
+    Args:
+        client: Cliente GraphQL autenticado
+        project_node_id: ID do projeto
+        field_name: Nome do campo (padrão: "Iteration")
+
+    Returns:
+        Dados do campo criado
+    """
+    mutation = """
+    mutation($input: CreateProjectV2FieldInput!) {
+      createProjectV2Field(input: $input) {
+        projectV2Field {
+          ... on ProjectV2IterationField {
+            id
+            name
+            dataType
+            configuration {
+              duration
+              startDay
+            }
+          }
+        }
+      }
+    }
+    """
+
+    variables = {
+        "input": {
+            "projectId": project_node_id,
+            "dataType": "ITERATION",
+            "name": field_name,
+        }
+    }
+
+    data = await client.execute(mutation, variables)
+    payload = data.get("createProjectV2Field", {}) if isinstance(data, dict) else {}
+    field = payload.get("projectV2Field")
+
+    if not isinstance(field, dict) or not field.get("id"):
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail="GitHub não retornou campo Iteration criado"
+        )
+
+    return field
+
+
+async def _create_single_select_field(
+    client: GithubGraphQLClient,
+    project_node_id: str,
+    field_name: str,
+    options: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    """
+    Cria um novo campo Single Select no projeto do GitHub.
+
+    Args:
+        client: Cliente GraphQL autenticado
+        project_node_id: ID do projeto
+        field_name: Nome do campo
+        options: Lista de opções iniciais [{"name": "...", "color": "..."}]
+
+    Returns:
+        Dados do campo criado
+    """
+    mutation = """
+    mutation($input: CreateProjectV2FieldInput!) {
+      createProjectV2Field(input: $input) {
+        projectV2Field {
+          ... on ProjectV2SingleSelectField {
+            id
+            name
+            dataType
+            options {
+              id
+              name
+              color
+            }
+          }
+        }
+      }
+    }
+    """
+
+    variables = {
+        "input": {
+            "projectId": project_node_id,
+            "dataType": "SINGLE_SELECT",
+            "name": field_name,
+        }
+    }
+
+    # Adicionar opções iniciais se fornecidas
+    if options:
+        single_select_options = []
+        for opt in options:
+            option_data = {"name": opt["name"]}
+            if "color" in opt and opt["color"]:
+                option_data["color"] = opt["color"]
+            single_select_options.append(option_data)
+
+        variables["input"]["singleSelectOptions"] = single_select_options
+
+    data = await client.execute(mutation, variables)
+    payload = data.get("createProjectV2Field", {}) if isinstance(data, dict) else {}
+    field = payload.get("projectV2Field")
+
+    if not isinstance(field, dict) or not field.get("id"):
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail=f"GitHub não retornou campo {field_name} criado"
+        )
+
+    return field
+
+
+async def _create_number_field(
+    client: GithubGraphQLClient,
+    project_node_id: str,
+    field_name: str,
+) -> dict[str, Any]:
+    """
+    Cria um novo campo Number no projeto do GitHub.
+
+    Args:
+        client: Cliente GraphQL autenticado
+        project_node_id: ID do projeto
+        field_name: Nome do campo
+
+    Returns:
+        Dados do campo criado
+    """
+    mutation = """
+    mutation($input: CreateProjectV2FieldInput!) {
+      createProjectV2Field(input: $input) {
+        projectV2Field {
+          ... on ProjectV2Field {
+            id
+            name
+            dataType
+          }
+        }
+      }
+    }
+    """
+
+    variables = {
+        "input": {
+            "projectId": project_node_id,
+            "dataType": "NUMBER",
+            "name": field_name,
+        }
+    }
+
+    data = await client.execute(mutation, variables)
+    payload = data.get("createProjectV2Field", {}) if isinstance(data, dict) else {}
+    field = payload.get("projectV2Field")
+
+    if not isinstance(field, dict) or not field.get("id"):
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail=f"GitHub não retornou campo {field_name} criado"
+        )
+
+    return field
+
+
+async def setup_project_fields(
+    db: AsyncSession,
+    account: Account,
+    project: GithubProject,
+) -> dict[str, Any]:
+    """
+    Verifica e cria campos necessários no projeto do GitHub.
+
+    Campos verificados/criados:
+    - Iteration (obrigatório para sprints)
+    - Epic (opcional, para agrupar issues)
+    - Estimate (opcional, para story points)
+
+    Returns:
+        Relatório de campos criados/existentes
+    """
+    token = await get_github_token(db, account)
+
+    # Carregar campos atuais
+    fields = await _load_project_fields(db, project.id)
+
+    report = {
+        "iteration": {"exists": False, "created": False},
+        "epic": {"exists": False, "created": False},
+        "estimate": {"exists": False, "created": False},
+        "status": {"exists": False, "created": False},
+    }
+
+    # Verificar campos existentes
+    iteration_field = _resolve_iteration_field_from_collection(fields)
+    epic_field = _resolve_epic_field_from_collection(list(fields))
+
+    # Verificar Status e Estimate
+    for field in fields:
+        field_name_lower = (field.field_name or "").lower()
+        field_type_lower = (field.field_type or "").lower()
+
+        if field_name_lower == "status" or "status" in field_type_lower:
+            report["status"]["exists"] = True
+
+        if field_name_lower in ["estimate", "story points", "points"]:
+            report["estimate"]["exists"] = True
+
+    report["iteration"]["exists"] = iteration_field is not None
+    report["epic"]["exists"] = epic_field is not None
+
+    async with GithubGraphQLClient(token) as client:
+        # Criar Iteration se não existir
+        if not report["iteration"]["exists"]:
+            await _create_iteration_field(client, project.project_node_id, "Iteration")
+            report["iteration"]["created"] = True
+
+        # Criar Epic se não existir
+        if not report["epic"]["exists"]:
+            default_epic_options = [
+                {"name": "Feature", "color": "BLUE"},
+                {"name": "Bug Fix", "color": "RED"},
+                {"name": "Tech Debt", "color": "YELLOW"},
+            ]
+            await _create_single_select_field(
+                client,
+                project.project_node_id,
+                "Epic",
+                default_epic_options
+            )
+            report["epic"]["created"] = True
+
+        # Criar Estimate se não existir
+        if not report["estimate"]["exists"]:
+            await _create_number_field(client, project.project_node_id, "Estimate")
+            report["estimate"]["created"] = True
+
+        # Atualizar cache de campos
+        if report["iteration"]["created"] or report["epic"]["created"] or report["estimate"]["created"]:
+            metadata = await fetch_project_metadata(client, project.owner_login, project.project_number)
+            await sync_project_fields(db, project, metadata.field_mappings)
+            await db.flush()
+
+    return report
+
+
+async def _update_remote_iteration(
+    client: GithubGraphQLClient,
+    project_node_id: str,
+    item_node_id: str,
+    field_id: str,
+    iteration_id: str,
+) -> None:
+    """
+    Atualiza o campo Iteration de um item do projeto.
+
+    Args:
+        client: Cliente GraphQL autenticado
+        project_node_id: ID do projeto
+        item_node_id: ID do item (issue/PR)
+        field_id: ID do campo Iteration
+        iteration_id: ID da iteration para atribuir
+    """
+    mutation = """
+    mutation($input: UpdateProjectV2ItemFieldValueInput!) {
+      updateProjectV2ItemFieldValue(input: $input) {
+        projectV2Item {
+          id
+        }
+      }
+    }
+    """
+    variables = {
+        "input": {
+            "projectId": project_node_id,
+            "itemId": item_node_id,
+            "fieldId": field_id,
+            "value": {
+                "iterationId": iteration_id,
+            },
+        }
+    }
+    await client.execute(mutation, variables)
+
+
+async def update_item_iteration(
+    db: AsyncSession,
+    account: Account,
+    project: GithubProject,
+    item: ProjectItem,
+    iteration_id: Optional[str],
+) -> ProjectItem:
+    """
+    Atualiza a sprint/iteration de um item do projeto.
+
+    Args:
+        db: Sessão do banco de dados
+        account: Conta do usuário
+        project: Projeto do GitHub
+        item: Item a ser atualizado
+        iteration_id: ID da iteration (ou None para remover)
+
+    Returns:
+        Item atualizado
+    """
+    iteration_field = await resolve_iteration_field(db, project)
+    if not iteration_field:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail="Campo Iteration não encontrado no projeto"
+        )
+
+    token = await get_github_token(db, account)
+
+    async with GithubGraphQLClient(token) as client:
+        if iteration_id:
+            # Atualizar para nova iteration
+            await _update_remote_iteration(
+                client,
+                project.project_node_id,
+                item.item_node_id,
+                iteration_field.field_id,
+                iteration_id,
+            )
+
+            # Resolver dados da iteration
+            iteration_title, iteration_start, iteration_end = resolve_iteration_option(
+                iteration_field,
+                iteration_id,
+            )
+
+            item.iteration = iteration_title
+            item.iteration_id = iteration_id
+            item.iteration_start = iteration_start
+            item.iteration_end = iteration_end
+        else:
+            # Remover iteration
+            await _clear_remote_status(
+                client,
+                project.project_node_id,
+                item.item_node_id,
+                iteration_field.field_id,
+            )
+            item.iteration = None
+            item.iteration_id = None
+            item.iteration_start = None
+            item.iteration_end = None
+
+    await db.flush()
+    await db.refresh(item)
+    return item
+
+
 async def apply_local_project_item_updates(
     db: AsyncSession,
     account: Account,
