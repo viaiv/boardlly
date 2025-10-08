@@ -36,9 +36,7 @@ interface ProjectMember {
 interface ProjectInvite {
   id: number;
   project_id: number;
-  invited_user_id: string;
-  invited_user_email: string;
-  invited_user_name: string | null;
+  invited_email: string;
   invited_by_email: string;
   invited_by_name: string | null;
   role: string;
@@ -75,11 +73,10 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
   const { user } = useSession();
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [invites, setInvites] = useState<ProjectInvite[]>([]);
-  const [allUsers, setAllUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState<string>("");
   const [selectedRole, setSelectedRole] = useState<string>("viewer");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -96,13 +93,11 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
         );
         setMembers(membersData);
 
-        // Fetch available users and pending invites if user can manage team
+        // Fetch pending invites if user can manage team
         if (canManageTeam) {
-          const [usersData, invitesData] = await Promise.all([
-            apiFetch<User[]>(`/api/projects/${projectId}/available-users`),
-            apiFetch<ProjectInvite[]>(`/api/projects/${projectId}/invites`),
-          ]);
-          setAllUsers(usersData);
+          const invitesData = await apiFetch<ProjectInvite[]>(
+            `/api/projects/${projectId}/invites`
+          );
           setInvites(invitesData);
         }
       } catch (err) {
@@ -117,7 +112,7 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
   }, [projectId, canManageTeam]);
 
   const handleAddMember = async () => {
-    if (!selectedUserId) return;
+    if (!inviteEmail.trim()) return;
 
     setIsSubmitting(true);
     try {
@@ -126,14 +121,20 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
         {
           method: "POST",
           body: JSON.stringify({
-            user_id: selectedUserId,
+            email: inviteEmail.trim(),
             role: selectedRole,
           }),
         }
       );
 
+      // Refresh invites list
+      const invitesData = await apiFetch<ProjectInvite[]>(
+        `/api/projects/${projectId}/invites`
+      );
+      setInvites(invitesData);
+
       setIsAddDialogOpen(false);
-      setSelectedUserId(null);
+      setInviteEmail("");
       setSelectedRole("viewer");
       toast.success("Convite enviado com sucesso");
     } catch (err) {
@@ -200,7 +201,11 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
         parseJson: false,
       });
 
-      setInvites(invites.filter((i) => i.id !== inviteId));
+      // Refresh invites list
+      const invitesData = await apiFetch<ProjectInvite[]>(
+        `/api/projects/${projectId}/invites`
+      );
+      setInvites(invitesData);
       toast.success("Convite cancelado");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Erro ao cancelar convite";
@@ -210,9 +215,6 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
     }
   };
 
-  // Backend já retorna apenas usuários disponíveis (filtrando membros e convidados)
-  const availableUsers = allUsers;
-
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between">
@@ -221,7 +223,7 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
             Gerencie quem tem acesso ao projeto e suas permissões.
           </p>
         </div>
-        {canManageTeam && availableUsers.length > 0 && (
+        {canManageTeam && (
           <Button onClick={() => setIsAddDialogOpen(true)} size="sm">
             <Plus className="mr-2 h-4 w-4" />
             Enviar Convite
@@ -353,10 +355,7 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
                 {invites.map((invite) => (
                   <tr key={invite.id}>
                     <td className="px-4 py-3">
-                      <div>
-                        <div className="font-medium">{invite.invited_user_name ?? "—"}</div>
-                        <div className="text-xs text-muted-foreground">{invite.invited_user_email}</div>
-                      </div>
+                      <div className="font-medium">{invite.invited_email}</div>
                     </td>
                     <td className="px-4 py-3">
                       <span className="uppercase text-muted-foreground">
@@ -402,19 +401,18 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
 
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="user">Usuário</Label>
-              <Select value={selectedUserId || ""} onValueChange={setSelectedUserId}>
-                <SelectTrigger id="user">
-                  <SelectValue placeholder="Selecione um usuário" />
-                </SelectTrigger>
-                <SelectContent>
-                  {availableUsers.map((u) => (
-                    <SelectItem key={u.id} value={u.id}>
-                      {u.name || u.email} ({u.email})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="usuario@exemplo.com"
+                required
+              />
+              <p className="text-xs text-muted-foreground">
+                Você pode convidar qualquer email. Se a pessoa ainda não tiver conta, ela poderá aceitar após se cadastrar.
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -467,7 +465,7 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
             </Button>
             <Button
               onClick={handleAddMember}
-              disabled={!selectedUserId || isSubmitting}
+              disabled={!inviteEmail.trim() || isSubmitting}
             >
               {isSubmitting ? "Enviando..." : "Enviar Convite"}
             </Button>

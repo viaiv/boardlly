@@ -1404,14 +1404,16 @@ async def create_project_invite(
     current_user: AppUser = Depends(deps.require_roles("owner", "admin")),
 ) -> ProjectInviteResponse:
     """
-    Cria um convite para adicionar um membro ao projeto.
+    Cria um convite para adicionar um membro ao projeto via email.
 
     **Permissão:** owner, admin
 
     **Validações:**
-    - Usuário convidado deve existir e pertencer à mesma conta
-    - Não pode haver convite pendente para o mesmo usuário
-    - Usuário não pode já ser membro do projeto
+    - Não pode haver convite pendente para o mesmo email
+    - Usuário com esse email não pode já ser membro do projeto
+
+    **Nota:** O email pode ser de alguém que ainda não tem conta. O convite
+    ficará pendente até a pessoa se cadastrar com esse email e aceitar.
     """
     account = await _get_account_or_404(db, current_user)
     project = await _get_project_or_404(db, account, project_id)
@@ -1424,18 +1426,17 @@ async def create_project_invite(
             detail=f"Role inválido. Use um dos seguintes: {', '.join(valid_roles)}"
         )
 
-    # Check if user exists and belongs to same account
-    invited_user = await db.get(AppUser, payload.user_id)
-    if not invited_user or invited_user.account_id != account.id:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            detail="Usuário não encontrado ou não pertence à mesma conta"
-        )
+    # Normalize email
+    invited_email = payload.email.lower().strip()
 
-    # Check if user is already a member
-    stmt = select(ProjectMember).where(
-        ProjectMember.user_id == payload.user_id,
-        ProjectMember.project_id == project.id
+    # Check if user with this email is already a member
+    stmt = (
+        select(ProjectMember)
+        .join(AppUser, ProjectMember.user_id == AppUser.id)
+        .where(
+            AppUser.email == invited_email,
+            ProjectMember.project_id == project.id
+        )
     )
     result = await db.execute(stmt)
     existing_member = result.scalar_one_or_none()
@@ -1443,12 +1444,12 @@ async def create_project_invite(
     if existing_member:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            detail="Usuário já é membro deste projeto"
+            detail="Usuário com este email já é membro deste projeto"
         )
 
-    # Check if there's already a pending invite
+    # Check if there's already a pending invite for this email
     stmt = select(ProjectInvite).where(
-        ProjectInvite.invited_user_id == payload.user_id,
+        ProjectInvite.invited_email == invited_email,
         ProjectInvite.project_id == project.id,
         ProjectInvite.status == "pending"
     )
@@ -1458,13 +1459,13 @@ async def create_project_invite(
     if existing_invite:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            detail="Já existe um convite pendente para este usuário"
+            detail="Já existe um convite pendente para este email"
         )
 
     # Create new invite
     new_invite = ProjectInvite(
         project_id=project.id,
-        invited_user_id=payload.user_id,
+        invited_email=invited_email,
         invited_by_user_id=current_user.id,
         role=payload.role,
         status="pending"
@@ -1476,7 +1477,7 @@ async def create_project_invite(
     return ProjectInviteResponse(
         id=new_invite.id,
         project_id=new_invite.project_id,
-        invited_user_id=new_invite.invited_user_id,
+        invited_email=new_invite.invited_email,
         invited_by_user_id=new_invite.invited_by_user_id,
         role=new_invite.role,
         status=new_invite.status,
@@ -1485,8 +1486,6 @@ async def create_project_invite(
         project_name=project.name,
         project_owner=project.owner_login,
         project_number=project.project_number,
-        invited_user_email=invited_user.email,
-        invited_user_name=invited_user.name,
         invited_by_email=current_user.email,
         invited_by_name=current_user.name,
     )
@@ -1520,8 +1519,7 @@ async def list_project_invites(
 
     invites = []
     for invite in invites_list:
-        # Load related users
-        invited_user = await db.get(AppUser, invite.invited_user_id)
+        # Load inviter user
         invited_by = await db.get(AppUser, invite.invited_by_user_id)
         invites.append(
             ProjectInviteListResponse(
@@ -1530,12 +1528,10 @@ async def list_project_invites(
                 project_name=project.name,
                 project_owner=project.owner_login,
                 project_number=project.project_number,
-                invited_user_id=invite.invited_user_id,
-                invited_user_email=invited_user.email,
-                invited_user_name=invited_user.name,
+                invited_email=invite.invited_email,
                 invited_by_user_id=invite.invited_by_user_id,
-                invited_by_email=invited_by.email,
-                invited_by_name=invited_by.name,
+                invited_by_email=invited_by.email if invited_by else "",
+                invited_by_name=invited_by.name if invited_by else None,
                 role=invite.role,
                 status=invite.status,
                 created_at=invite.created_at,
@@ -1553,15 +1549,15 @@ async def list_received_invites(
     """
     Lista convites recebidos pelo usuário atual (pendentes).
 
-    Qualquer usuário pode ver seus próprios convites.
+    Qualquer usuário pode ver convites enviados para seu email.
     """
     account = await _get_account_or_404(db, current_user)
 
-    # Query invites received by current user
+    # Query invites received by current user's email
     stmt = (
         select(ProjectInvite)
         .where(
-            ProjectInvite.invited_user_id == current_user.id,
+            ProjectInvite.invited_email == current_user.email,
             ProjectInvite.status == "pending"
         )
         .order_by(ProjectInvite.created_at.desc())
@@ -1571,7 +1567,7 @@ async def list_received_invites(
 
     invites = []
     for invite in invites_list:
-        # Load related project and user
+        # Load related project and inviter
         project = await db.get(GithubProject, invite.project_id)
         invited_by = await db.get(AppUser, invite.invited_by_user_id)
 
@@ -1584,12 +1580,10 @@ async def list_received_invites(
                 project_name=project.name,
                 project_owner=project.owner_login,
                 project_number=project.project_number,
-                invited_user_id=invite.invited_user_id,
-                invited_user_email=current_user.email,
-                invited_user_name=current_user.name,
+                invited_email=invite.invited_email,
                 invited_by_user_id=invite.invited_by_user_id,
-                invited_by_email=invited_by.email,
-                invited_by_name=invited_by.name,
+                invited_by_email=invited_by.email if invited_by else "",
+                invited_by_name=invited_by.name if invited_by else None,
                 role=invite.role,
                 status=invite.status,
                 created_at=invite.created_at,
@@ -1608,7 +1602,7 @@ async def accept_project_invite(
     """
     Aceita um convite para se tornar membro do projeto.
 
-    O convite deve estar pendente e ser destinado ao usuário atual.
+    O convite deve estar pendente e o email deve corresponder ao do usuário atual.
     Ao aceitar, o convite é marcado como "accepted" e um ProjectMember é criado.
     """
     account = await _get_account_or_404(db, current_user)
@@ -1621,8 +1615,8 @@ async def accept_project_invite(
             detail="Convite não encontrado"
         )
 
-    # Verify invite is for current user
-    if invite.invited_user_id != current_user.id:
+    # Verify invite email matches current user's email
+    if invite.invited_email.lower() != current_user.email.lower():
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             detail="Este convite não é para você"
@@ -1695,7 +1689,7 @@ async def reject_project_invite(
     """
     Rejeita um convite para se tornar membro do projeto.
 
-    O convite deve estar pendente e ser destinado ao usuário atual.
+    O convite deve estar pendente e o email deve corresponder ao do usuário atual.
     """
     # Find invite
     invite = await db.get(ProjectInvite, invite_id)
@@ -1705,8 +1699,8 @@ async def reject_project_invite(
             detail="Convite não encontrado"
         )
 
-    # Verify invite is for current user
-    if invite.invited_user_id != current_user.id:
+    # Verify invite email matches current user's email
+    if invite.invited_email.lower() != current_user.email.lower():
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             detail="Este convite não é para você"

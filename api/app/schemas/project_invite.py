@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 class ProjectInviteResponse(BaseModel):
     id: int
     project_id: int
-    invited_user_id: UUID
+    invited_email: str
     invited_by_user_id: UUID
     role: str
     status: str
@@ -21,9 +21,7 @@ class ProjectInviteResponse(BaseModel):
     project_owner: str | None = None
     project_number: int | None = None
 
-    # User information (joined)
-    invited_user_email: str | None = None
-    invited_user_name: str | None = None
+    # Inviter information (joined)
     invited_by_email: str | None = None
     invited_by_name: str | None = None
 
@@ -32,7 +30,7 @@ class ProjectInviteResponse(BaseModel):
 
 
 class ProjectInviteCreateRequest(BaseModel):
-    user_id: UUID = Field(description="ID do usuário a ser convidado")
+    email: str = Field(description="Email do usuário a ser convidado")
     role: str = Field(default="viewer", description="Role que o usuário terá no projeto (viewer, editor, pm, admin)")
 
 
@@ -42,9 +40,7 @@ class ProjectInviteListResponse(BaseModel):
     project_name: str | None
     project_owner: str | None
     project_number: int | None
-    invited_user_id: UUID
-    invited_user_email: str
-    invited_user_name: str | None
+    invited_email: str
     invited_by_user_id: UUID
     invited_by_email: str
     invited_by_name: str | None

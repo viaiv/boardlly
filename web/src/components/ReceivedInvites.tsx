@@ -11,9 +11,7 @@ interface ReceivedInvite {
   project_name: string | null;
   project_owner: string | null;
   project_number: number | null;
-  invited_user_id: string;
-  invited_user_email: string;
-  invited_user_name: string | null;
+  invited_email: string;
   invited_by_user_id: string;
   invited_by_email: string;
   invited_by_name: string | null;

@@ -12,7 +12,8 @@ class ProjectInvite(Base):
     """
     Convites para adicionar membros a projetos.
 
-    Um convite é criado por admin/owner e pode ser aceito ou rejeitado pelo usuário convidado.
+    Um convite é criado por admin/owner enviando um email. O destinatário pode aceitar
+    ou rejeitar o convite. Suporta convidar pessoas que ainda não têm conta.
     """
     __tablename__ = "project_invite"
     __table_args__ = (
@@ -24,7 +25,7 @@ class ProjectInvite(Base):
             "status = ANY (ARRAY['pending','accepted','rejected','cancelled'])",
             name="ck_project_invite_status_valid",
         ),
-        Index("ix_project_invite_user_project", "invited_user_id", "project_id", unique=True),
+        Index("ix_project_invite_email_project", "invited_email", "project_id", unique=True),
         Index("ix_project_invite_status", "status"),
     )
 
@@ -36,9 +37,8 @@ class ProjectInvite(Base):
         nullable=False
     )
 
-    invited_user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("app_user.id", ondelete="CASCADE"),
+    invited_email: Mapped[str] = mapped_column(
+        String(length=255),
         nullable=False
     )
 
@@ -77,11 +77,6 @@ class ProjectInvite(Base):
     project: Mapped["GithubProject"] = relationship(
         "GithubProject",
         foreign_keys=[project_id],
-    )
-
-    invited_user: Mapped["AppUser"] = relationship(
-        "AppUser",
-        foreign_keys=[invited_user_id],
     )
 
     invited_by: Mapped["AppUser"] = relationship(
