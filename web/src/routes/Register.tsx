@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,6 +13,11 @@ const ROLE_OPTIONS: SessionUser["role"][] = ["viewer", "editor", "pm", "admin"];
 export function Register() {
   const navigate = useNavigate();
   const { status, user, refresh } = useSession();
+  const [searchParams] = useSearchParams();
+
+  // Capturar invite_token da URL
+  const inviteToken = searchParams.get("invite_token");
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -25,14 +30,28 @@ export function Register() {
   const isAuthenticated = status === "authenticated";
   const canAssignRole = isAuthenticated && ["admin", "owner"].includes(user?.role ?? "");
   const isFirstUserFlow = !isAuthenticated;
+  const hasInvite = !!inviteToken;
   const passwordMismatch = password !== confirmPassword && confirmPassword.length > 0;
 
   const formTitle = useMemo(() => {
+    if (hasInvite) {
+      return "Aceitar Convite";
+    }
     if (isFirstUserFlow) {
       return "Criar primeira conta";
     }
     return "Adicionar novo usuário";
-  }, [isFirstUserFlow]);
+  }, [isFirstUserFlow, hasInvite]);
+
+  const formDescription = useMemo(() => {
+    if (hasInvite) {
+      return "Complete seu cadastro para aceitar o convite e acessar o projeto.";
+    }
+    if (isFirstUserFlow) {
+      return "Informe seus dados para acessar o Tactyo. Na próxima etapa você criará a conta.";
+    }
+    return "Somente administradores ou owners podem adicionar novos membros.";
+  }, [isFirstUserFlow, hasInvite]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -51,6 +70,10 @@ export function Register() {
       };
       if (canAssignRole) {
         payload.role = role;
+      }
+      // Adicionar invite_token se presente na URL
+      if (inviteToken) {
+        payload.invite_token = inviteToken;
       }
 
       const response = await apiFetch<{ [key: string]: unknown }>("/api/auth/register", {
@@ -84,9 +107,7 @@ export function Register() {
         <div className="space-y-1 text-center">
           <h1 className="text-2xl font-semibold tracking-tight">{formTitle}</h1>
           <p className="text-sm text-muted-foreground">
-            {isFirstUserFlow
-              ? "Informe seus dados para acessar o Tactyo. Na próxima etapa você criará a conta."
-              : "Somente administradores ou owners podem adicionar novos membros."}
+            {formDescription}
           </p>
         </div>
         <form className="space-y-4" onSubmit={handleSubmit}>
