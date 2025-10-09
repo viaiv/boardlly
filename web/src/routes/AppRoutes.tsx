@@ -9,6 +9,7 @@ import { RequestDetail } from "@/routes/RequestDetail";
 import { Backlog } from "@/routes/Backlog";
 import { Sprints } from "@/routes/Sprints";
 import { Epics } from "@/routes/Epics";
+import { ProjectRepositories } from "@/routes/ProjectRepositories";
 import { Settings } from "@/routes/Settings";
 import { ProjectSettings } from "@/routes/ProjectSettings";
 import { ProjectSelection } from "@/routes/ProjectSelection";
@@ -33,6 +34,7 @@ export function AppRoutes() {
           <Route path="backlog" element={<Backlog />} />
           <Route path="sprints" element={<Sprints />} />
           <Route path="epics" element={<Epics />} />
+          <Route path="repositories" element={<ProjectRepositories />} />
           <Route path="invites" element={<Invites />} />
           <Route path="settings" element={<Settings />} />
           <Route path="settings/projects/:projectId" element={<ProjectSettings />} />

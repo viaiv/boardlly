@@ -10,8 +10,9 @@ from app.db.base import Base
 
 class EpicOption(Base):
     """
-    Armazena as opções de épico (SingleSelect field no GitHub Projects V2).
-    Cache local das opções disponíveis no campo "Epic" do projeto.
+    Armazena épicos como labels do GitHub (ex: "epic:setup-config").
+    Metadados adicionais (descrição, ordem) são gerenciados apenas no Tactyo.
+    Labels são criadas/atualizadas em todos repositórios vinculados ao projeto.
     """
     __tablename__ = "epic_option"
 
@@ -21,8 +22,9 @@ class EpicOption(Base):
     )
 
     # Identificadores do GitHub
-    option_id: Mapped[str] = mapped_column(String(length=255), nullable=False)  # Node ID do GitHub
-    option_name: Mapped[str] = mapped_column(String(length=255), nullable=False)  # Label do épico
+    option_id: Mapped[str | None] = mapped_column(String(length=255), nullable=True)  # Node ID do GitHub (Single Select - deprecated)
+    option_name: Mapped[str] = mapped_column(String(length=255), nullable=False)  # Nome amigável do épico
+    label_name: Mapped[str] = mapped_column(String(length=255), nullable=False, unique=False)  # Nome da label no GitHub (ex: "epic:setup-config")
 
     # Metadados do épico
     color: Mapped[str | None] = mapped_column(String(length=50), nullable=True)  # Cor hex ou nome
@@ -40,7 +42,7 @@ class EpicOption(Base):
     project = relationship("GithubProject", back_populates="epic_options")
 
     __table_args__ = (
-        UniqueConstraint("project_id", "option_id", name="uq_epic_option_project_option"),
+        UniqueConstraint("project_id", "label_name", name="uq_epic_option_project_label"),
         {
             "sqlite_autoincrement": True,
         },

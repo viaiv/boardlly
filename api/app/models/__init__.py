@@ -9,3 +9,4 @@ from .change_request import ChangeRequest  # noqa: F401
 from .project_member import ProjectMember  # noqa: F401
 from .project_invite import ProjectInvite  # noqa: F401
 from .epic_option import EpicOption  # noqa: F401
+from .project_repository import ProjectRepository  # noqa: F401

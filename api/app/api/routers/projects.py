@@ -15,6 +15,7 @@ from app.models.github_project_field import GithubProjectField
 from app.models.project_item import ProjectItem
 from app.models.project_member import ProjectMember
 from app.models.project_invite import ProjectInvite
+from app.models.project_repository import ProjectRepository
 from app.models.user import AppUser
 from app.services.email import send_project_invite_email
 from app.schemas.github import (
@@ -48,6 +49,11 @@ from app.schemas.project_invite import (
     ProjectInviteCreateRequest,
     ProjectInviteListResponse,
 )
+from app.schemas.repository import (
+    ProjectRepositoryResponse,
+    ProjectRepositoryCreateRequest,
+    ProjectRepositoryUpdateRequest,
+)
 from app.schemas.hierarchy import (
     HierarchyResponse,
     HierarchyEpicResponse,
@@ -61,13 +67,15 @@ from app.services.github import (
     fetch_project_item_details,
     get_github_token,
     list_epic_options,
-    create_epic_option,
-    update_epic_option,
-    update_item_iteration,
-    delete_epic_option,
     list_iteration_options,
     parse_datetime,
     setup_project_fields,
+    update_item_iteration,
+    # New label-based epic functions
+    create_epic_label,
+    update_epic_label,
+    delete_epic_label,
+    list_epic_labels,
 )
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -155,9 +163,16 @@ async def list_projects(
 ) -> list[GithubProjectResponse]:
     """Lista todos os projetos GitHub da conta do usuário."""
     account = await _get_account_or_404(db, current_user)
+    print(f"🔍 [API] list_projects - User: {current_user.email}, Account ID: {account.id}")
+
     stmt = select(GithubProject).where(GithubProject.account_id == account.id).order_by(GithubProject.created_at.desc())
     result = await db.execute(stmt)
     projects = result.scalars().all()
+
+    print(f"📊 [API] list_projects - Encontrados {len(projects)} projetos para account_id={account.id}")
+    for proj in projects:
+        print(f"   - ID: {proj.id}, Nome: {proj.name}, Owner: {proj.owner_login}")
+
     return [GithubProjectResponse.model_validate(p) for p in projects]
 
 
@@ -1052,16 +1067,14 @@ async def list_epic_options_endpoint(
     current_user: AppUser = Depends(deps.get_current_user),
     x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> list[EpicOptionResponse]:
-    print("DEBUG: ===== ENDPOINT /current/epics/options CHAMADO =====")
+    """
+    Lista todos os épicos (labels) do projeto.
+    Épicos são gerenciados como labels do GitHub com prefixo 'epic:'.
+    """
     account = await _get_account_or_404(db, current_user)
-    print(f"DEBUG: Account ID: {account.id}")
     project = await _get_project_or_404(db, account, x_project_id)
-    print(f"DEBUG: Project ID: {project.id}, name: {project.name}")
-    options = await list_epic_options(db, project)
-    print(f"DEBUG: list_epic_options retornou {len(options)} opções")
-    result = [EpicOptionResponse.model_validate(option.__dict__) for option in options]
-    print(f"DEBUG: Retornando {len(result)} épicos ao frontend")
-    return result
+    epics = await list_epic_labels(db, project)
+    return [EpicOptionResponse.model_validate(epic) for epic in epics]
 
 
 @router.post(
@@ -1075,36 +1088,173 @@ async def create_epic_option_endpoint(
     current_user: AppUser = Depends(deps.require_roles("owner", "admin")),
     x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> EpicOptionResponse:
+    """
+    Cria um novo épico como label do GitHub.
+    A label é criada em todos os repositórios vinculados ao projeto.
+    """
     account = await _get_account_or_404(db, current_user)
     project = await _get_project_or_404(db, account, x_project_id)
-    option = await create_epic_option(db, account, project, payload.name, payload.color)
-    return EpicOptionResponse.model_validate(option.__dict__)
+    epic = await create_epic_label(db, account, project, payload.name, payload.color, payload.description)
+    return EpicOptionResponse.model_validate(epic)
 
 
-@router.patch("/current/epics/options/{option_id}", response_model=EpicOptionResponse)
+@router.patch("/current/epics/options/{epic_id}", response_model=EpicOptionResponse)
 async def update_epic_option_endpoint(
-    option_id: str,
+    epic_id: int,
     payload: EpicOptionUpdateRequest,
     db: AsyncSession = Depends(deps.get_db),
     current_user: AppUser = Depends(deps.require_roles("owner", "admin")),
     x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> EpicOptionResponse:
+    """
+    Atualiza um épico (label) em todos os repositórios do projeto.
+    """
     account = await _get_account_or_404(db, current_user)
     project = await _get_project_or_404(db, account, x_project_id)
-    option = await update_epic_option(db, account, project, option_id, payload.name, payload.color)
-    return EpicOptionResponse.model_validate(option.__dict__)
+    epic = await update_epic_label(db, account, project, epic_id, payload.name, payload.color, payload.description)
+    return EpicOptionResponse.model_validate(epic)
 
 
-@router.delete("/current/epics/options/{option_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/current/epics/options/{epic_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_epic_option_endpoint(
-    option_id: str,
+    epic_id: int,
     db: AsyncSession = Depends(deps.get_db),
     current_user: AppUser = Depends(deps.require_roles("owner", "admin")),
     x_project_id: int | None = Header(None, alias="X-Project-Id"),
 ) -> Response:
+    """
+    Deleta um épico (label) de todos os repositórios do projeto.
+    """
     account = await _get_account_or_404(db, current_user)
     project = await _get_project_or_404(db, account, x_project_id)
-    await delete_epic_option(db, account, project, option_id)
+    await delete_epic_label(db, account, project, epic_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ============================================================================
+# Project Repositories Management
+# ============================================================================
+
+
+@router.get("/current/repositories", response_model=list[ProjectRepositoryResponse])
+async def list_project_repositories(
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: AppUser = Depends(deps.get_current_user),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
+) -> list[ProjectRepositoryResponse]:
+    """Lista todos os repositórios vinculados ao projeto."""
+    account = await _get_account_or_404(db, current_user)
+    project = await _get_project_or_404(db, account, x_project_id)
+
+    stmt = select(ProjectRepository).where(ProjectRepository.project_id == project.id)
+    result = await db.execute(stmt)
+    repositories = result.scalars().all()
+
+    return [ProjectRepositoryResponse.model_validate(repo) for repo in repositories]
+
+
+@router.post("/current/repositories", response_model=ProjectRepositoryResponse, status_code=status.HTTP_201_CREATED)
+async def add_project_repository(
+    payload: ProjectRepositoryCreateRequest,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: AppUser = Depends(deps.require_roles("owner", "admin")),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
+) -> ProjectRepositoryResponse:
+    """Vincula um repositório ao projeto."""
+    account = await _get_account_or_404(db, current_user)
+    project = await _get_project_or_404(db, account, x_project_id)
+
+    # Verificar se já existe
+    stmt = select(ProjectRepository).where(
+        ProjectRepository.project_id == project.id,
+        ProjectRepository.owner == payload.owner,
+        ProjectRepository.repo_name == payload.repo_name,
+    )
+    result = await db.execute(stmt)
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail=f"Repositório {payload.owner}/{payload.repo_name} já está vinculado ao projeto"
+        )
+
+    # Se está marcando como primary, desmarcar outros
+    if payload.is_primary:
+        stmt = select(ProjectRepository).where(
+            ProjectRepository.project_id == project.id,
+            ProjectRepository.is_primary == True
+        )
+        result = await db.execute(stmt)
+        for repo in result.scalars().all():
+            repo.is_primary = False
+
+    # Criar repositório
+    repository = ProjectRepository(
+        project_id=project.id,
+        owner=payload.owner,
+        repo_name=payload.repo_name,
+        is_primary=payload.is_primary,
+    )
+    db.add(repository)
+    await db.commit()
+    await db.refresh(repository)
+
+    return ProjectRepositoryResponse.model_validate(repository)
+
+
+@router.patch("/current/repositories/{repository_id}", response_model=ProjectRepositoryResponse)
+async def update_project_repository(
+    repository_id: int,
+    payload: ProjectRepositoryUpdateRequest,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: AppUser = Depends(deps.require_roles("owner", "admin")),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
+) -> ProjectRepositoryResponse:
+    """Atualiza um repositório do projeto."""
+    account = await _get_account_or_404(db, current_user)
+    project = await _get_project_or_404(db, account, x_project_id)
+
+    repository = await db.get(ProjectRepository, repository_id)
+    if not repository or repository.project_id != project.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Repositório não encontrado")
+
+    # Se está marcando como primary, desmarcar outros
+    if payload.is_primary:
+        stmt = select(ProjectRepository).where(
+            ProjectRepository.project_id == project.id,
+            ProjectRepository.is_primary == True,
+            ProjectRepository.id != repository_id
+        )
+        result = await db.execute(stmt)
+        for repo in result.scalars().all():
+            repo.is_primary = False
+
+    if payload.is_primary is not None:
+        repository.is_primary = payload.is_primary
+
+    await db.commit()
+    await db.refresh(repository)
+
+    return ProjectRepositoryResponse.model_validate(repository)
+
+
+@router.delete("/current/repositories/{repository_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_project_repository(
+    repository_id: int,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: AppUser = Depends(deps.require_roles("owner", "admin")),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
+) -> Response:
+    """Remove um repositório do projeto."""
+    account = await _get_account_or_404(db, current_user)
+    project = await _get_project_or_404(db, account, x_project_id)
+
+    repository = await db.get(ProjectRepository, repository_id)
+    if not repository or repository.project_id != project.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Repositório não encontrado")
+
+    await db.delete(repository)
+    await db.commit()
+
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

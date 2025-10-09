@@ -156,19 +156,26 @@ class EpicSummaryResponse(BaseModel):
 
 
 class EpicOptionResponse(BaseModel):
-    id: str
-    name: str
+    id: int
+    name: str = Field(validation_alias="option_name")
     color: str | None = None
+    description: str | None = None
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
 
 
 class EpicOptionCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     color: str | None = Field(default=None, max_length=50)
+    description: str | None = Field(default=None, max_length=500)
 
 
 class EpicOptionUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     color: str | None = Field(default=None, max_length=50)
+    description: str | None = Field(default=None, max_length=500)
 
 
 class EpicDashboardResponse(BaseModel):

@@ -40,6 +40,9 @@ class GithubProject(Base):
     epic_options = relationship(
         "EpicOption", back_populates="project", cascade="all, delete-orphan"
     )
+    repositories = relationship(
+        "ProjectRepository", back_populates="project", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         UniqueConstraint(

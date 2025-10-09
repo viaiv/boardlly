@@ -17,6 +17,8 @@ from app.models.account_github_credentials import AccountGithubCredentials
 from app.models.github_project import GithubProject
 from app.models.project_item import ProjectItem
 from app.models.github_project_field import GithubProjectField
+from app.models.project_repository import ProjectRepository
+from app.models.epic_option import EpicOption
 
 GITHUB_GRAPHQL_URL = "https://api.github.com/graphql"
 
@@ -91,6 +93,7 @@ class EpicOptionData:
     id: str
     name: str
     color: Optional[str]
+    description: Optional[str] = None
 
 
 START_DATE_ALIASES = {"start date", "start", "kickoff", "início", "inicio"}
@@ -191,6 +194,148 @@ class GithubGraphQLClient:
         await self.close()
 
 
+class GithubRestClient:
+    """
+    Cliente HTTP para GitHub REST API v3.
+    Usado para operações que não estão disponíveis no GraphQL (ex: gerenciar labels).
+    """
+
+    def __init__(self, token: str):
+        self.token = token
+        self._client = httpx.AsyncClient(
+            base_url="https://api.github.com",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "Tactyo/0.1",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            timeout=httpx.Timeout(15.0, connect=10.0),
+        )
+
+    async def _request(self, method: str, endpoint: str, **kwargs) -> dict[str, Any] | list[Any]:
+        """Executa uma requisição REST e retorna o JSON."""
+        try:
+            response = await self._client.request(method, endpoint, **kwargs)
+            response.raise_for_status()
+
+            # DELETE pode retornar 204 No Content
+            if response.status_code == 204:
+                return {}
+
+            return response.json()
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.text
+            raise HTTPException(
+                exc.response.status_code,
+                detail=f"GitHub API retornou erro: {detail}",
+            ) from exc
+        except httpx.RequestError as exc:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Não foi possível se comunicar com o GitHub",
+            ) from exc
+
+    # =========================================================================
+    # Labels API
+    # =========================================================================
+
+    async def list_labels(self, owner: str, repo: str) -> list[dict[str, Any]]:
+        """Lista todas as labels de um repositório."""
+        return await self._request("GET", f"/repos/{owner}/{repo}/labels")
+
+    async def create_label(
+        self,
+        owner: str,
+        repo: str,
+        name: str,
+        color: str,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Cria uma nova label no repositório.
+
+        Args:
+            owner: Dono do repositório
+            repo: Nome do repositório
+            name: Nome da label (ex: "epic:setup-config")
+            color: Cor em hex sem # (ex: "0052cc")
+            description: Descrição opcional
+        """
+        payload = {"name": name, "color": color}
+        if description:
+            payload["description"] = description
+
+        return await self._request("POST", f"/repos/{owner}/{repo}/labels", json=payload)
+
+    async def update_label(
+        self,
+        owner: str,
+        repo: str,
+        current_name: str,
+        new_name: str | None = None,
+        color: str | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Atualiza uma label existente.
+
+        Args:
+            owner: Dono do repositório
+            repo: Nome do repositório
+            current_name: Nome atual da label
+            new_name: Novo nome (opcional)
+            color: Nova cor em hex sem # (opcional)
+            description: Nova descrição (opcional)
+        """
+        payload = {}
+        if new_name:
+            payload["new_name"] = new_name
+        if color:
+            payload["color"] = color
+        if description is not None:
+            payload["description"] = description
+
+        return await self._request("PATCH", f"/repos/{owner}/{repo}/labels/{current_name}", json=payload)
+
+    async def delete_label(self, owner: str, repo: str, name: str) -> None:
+        """Deleta uma label do repositório."""
+        await self._request("DELETE", f"/repos/{owner}/{repo}/labels/{name}")
+
+    async def add_labels_to_issue(
+        self,
+        owner: str,
+        repo: str,
+        issue_number: int,
+        labels: list[str],
+    ) -> list[dict[str, Any]]:
+        """Adiciona labels a uma issue."""
+        return await self._request(
+            "POST",
+            f"/repos/{owner}/{repo}/issues/{issue_number}/labels",
+            json={"labels": labels}
+        )
+
+    async def remove_label_from_issue(
+        self,
+        owner: str,
+        repo: str,
+        issue_number: int,
+        label: str,
+    ) -> None:
+        """Remove uma label de uma issue."""
+        await self._request("DELETE", f"/repos/{owner}/{repo}/issues/{issue_number}/labels/{label}")
+
+    async def close(self) -> None:
+        await self._client.aclose()
+
+    async def __aenter__(self) -> "GithubRestClient":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.close()
+
+
 async def fetch_project_metadata(client: GithubGraphQLClient, owner: str, number: int) -> ProjectMetadata:
     query = """
     query($owner: String!, $number: Int!) {
@@ -203,7 +348,7 @@ async def fetch_project_metadata(client: GithubGraphQLClient, owner: str, number
               __typename
               ... on ProjectV2FieldCommon { id name dataType }
               ... on ProjectV2IterationField { id name configuration { iterations { id title startDate duration } } }
-              ... on ProjectV2SingleSelectField { id name options { id name color } }
+              ... on ProjectV2SingleSelectField { id name options { id name color description } }
             }
           }
         }
@@ -217,7 +362,7 @@ async def fetch_project_metadata(client: GithubGraphQLClient, owner: str, number
               __typename
               ... on ProjectV2FieldCommon { id name dataType }
               ... on ProjectV2IterationField { id name configuration { iterations { id title startDate duration } } }
-              ... on ProjectV2SingleSelectField { id name options { id name color } }
+              ... on ProjectV2SingleSelectField { id name options { id name color description } }
             }
           }
         }
@@ -785,15 +930,23 @@ async def upsert_project_items(
 ) -> int:
     from app.utils.hierarchy import derive_item_type_from_labels
 
+    # Carregar itens existentes no banco para este projeto
+    stmt = select(ProjectItem).where(ProjectItem.project_id == project.id)
+    result = await db.execute(stmt)
+    existing_items = list(result.scalars().all())
+    existing_by_node_id = {item.item_node_id: item for item in existing_items}
+
+    # Rastrear quais itens foram vistos na sincronização
+    seen_node_ids: set[str] = set()
+
     count = 0
     for payload in items:
         # Derive item_type from labels
         item_type = derive_item_type_from_labels(payload.labels, payload.title)
 
-        stmt = select(ProjectItem).where(ProjectItem.item_node_id == payload.node_id)
-        result = await db.execute(stmt)
-        item = result.scalar_one_or_none()
+        item = existing_by_node_id.get(payload.node_id)
         if item:
+            # Atualizar item existente
             item.content_node_id = payload.content_node_id
             item.content_type = payload.content_type
             item.title = payload.title
@@ -817,6 +970,7 @@ async def upsert_project_items(
             item.last_synced_at = datetime.now(timezone.utc)
             item.remote_updated_at = payload.remote_updated_at
         else:
+            # Criar novo item
             item = ProjectItem(
                 account_id=account.id,
                 project_id=project.id,
@@ -845,7 +999,21 @@ async def upsert_project_items(
                 last_synced_at=datetime.now(timezone.utc),
             )
             db.add(item)
+
+        seen_node_ids.add(payload.node_id)
         count += 1
+
+    # Deletar itens que não existem mais no GitHub (órfãos)
+    deleted_count = 0
+    for item in existing_items:
+        if item.item_node_id not in seen_node_ids:
+            print(f"🗑️  [SYNC] Deletando item órfão: {item.id} - {item.title} (não existe mais no GitHub)")
+            await db.delete(item)
+            deleted_count += 1
+
+    if deleted_count > 0:
+        print(f"🗑️  [SYNC] Total de {deleted_count} itens órfãos deletados do projeto {project.id}")
+
     project.last_synced_at = datetime.now(timezone.utc)
     await db.flush()
     return count
@@ -1063,7 +1231,8 @@ def _extract_epic_options(epic_field: Optional[GithubProjectField]) -> list[Epic
         if not option_id or not name:
             continue
         color = option.get("color") if isinstance(option.get("color"), str) else None
-        collected.append(EpicOptionData(id=option_id, name=name, color=color))
+        description = option.get("description") if isinstance(option.get("description"), str) else None
+        collected.append(EpicOptionData(id=option_id, name=name, color=color, description=description))
 
     print(f"DEBUG: _extract_epic_options - coletou {len(collected)} opções")
     return collected
@@ -1303,6 +1472,257 @@ async def delete_epic_option(
             option_id,
         )
         await _refresh_epic_field_cache(client, db, project)
+
+
+# ============================================================================
+# Epic Management with GitHub Labels (NEW)
+# ============================================================================
+
+def _generate_label_name(display_name: str) -> str:
+    """
+    Gera o nome da label a partir do nome amigável.
+    Ex: "Setup & Config" -> "epic:setup-config"
+    """
+    import re
+    # Remove emojis e caracteres especiais
+    clean = re.sub(r'[^\w\s&-]', '', display_name)
+    # Substitui & por and, espaços por hífen
+    clean = clean.replace('&', 'and').replace(' ', '-').lower()
+    # Remove hífens duplicados
+    clean = re.sub(r'-+', '-', clean).strip('-')
+    return f"epic:{clean}"
+
+
+def _normalize_color_for_label(color: str | None) -> str:
+    """
+    Normaliza cor para formato aceito pelo GitHub Labels API (hex sem #).
+    """
+    if not color:
+        return "0052cc"  # Azul padrão
+
+    # Remove # se presente
+    color = color.lstrip('#')
+
+    # Se for nome de cor do GitHub, converte para hex
+    github_colors = {
+        "GRAY": "6b7280",
+        "BLUE": "0052cc",
+        "GREEN": "10b981",
+        "YELLOW": "f59e0b",
+        "ORANGE": "f97316",
+        "RED": "ef4444",
+        "PURPLE": "a855f7",
+        "PINK": "ec4899",
+        "BROWN": "92400e",
+        "BLACK": "000000",
+    }
+
+    if color.upper() in github_colors:
+        return github_colors[color.upper()]
+
+    # Se já é hex válido, retorna
+    if len(color) == 6 and all(c in '0123456789abcdefABCDEF' for c in color):
+        return color.lower()
+
+    # Default
+    return "0052cc"
+
+
+async def create_epic_label(
+    db: AsyncSession,
+    account: Account,
+    project: GithubProject,
+    display_name: str,
+    color: str | None,
+    description: str | None = None,
+) -> EpicOption:
+    """
+    Cria um novo épico como label do GitHub.
+    A label é criada em todos os repositórios vinculados ao projeto.
+    """
+    # Gerar nome da label
+    label_name = _generate_label_name(display_name)
+
+    # Verificar se já existe
+    stmt = select(EpicOption).where(
+        EpicOption.project_id == project.id,
+        EpicOption.label_name == label_name
+    )
+    result = await db.execute(stmt)
+    if result.scalar_one_or_none():
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=f"Épico com nome '{display_name}' já existe")
+
+    # Buscar repositórios do projeto
+    stmt = select(ProjectRepository).where(ProjectRepository.project_id == project.id)
+    result = await db.execute(stmt)
+    repositories = list(result.scalars().all())
+
+    if not repositories:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="Projeto não possui repositórios vinculados. Adicione pelo menos um repositório primeiro."
+        )
+
+    # Criar label em todos os repositórios
+    token = await get_github_token(db, account)
+    normalized_color = _normalize_color_for_label(color)
+
+    async with GithubRestClient(token) as client:
+        errors = []
+        for repo in repositories:
+            try:
+                await client.create_label(
+                    owner=repo.owner,
+                    repo=repo.repo_name,
+                    name=label_name,
+                    color=normalized_color,
+                    description=description,
+                )
+            except HTTPException as e:
+                # Se label já existe no repo, ignora (422)
+                if e.status_code != 422:
+                    errors.append(f"{repo.owner}/{repo.repo_name}: {e.detail}")
+
+        if errors:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Erro ao criar label em alguns repositórios: {', '.join(errors)}"
+            )
+
+    # Salvar no banco local
+    epic = EpicOption(
+        project_id=project.id,
+        option_id=None,  # Não usado mais
+        option_name=display_name,
+        label_name=label_name,
+        color=f"#{normalized_color}",
+        description=description,
+    )
+    db.add(epic)
+    await db.commit()
+    await db.refresh(epic)
+
+    return epic
+
+
+async def update_epic_label(
+    db: AsyncSession,
+    account: Account,
+    project: GithubProject,
+    epic_id: int,
+    display_name: str | None = None,
+    color: str | None = None,
+    description: str | None = None,
+) -> EpicOption:
+    """
+    Atualiza um épico (label) em todos os repositórios do projeto.
+    """
+    epic = await db.get(EpicOption, epic_id)
+    if not epic or epic.project_id != project.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Épico não encontrado")
+
+    # Buscar repositórios
+    stmt = select(ProjectRepository).where(ProjectRepository.project_id == project.id)
+    result = await db.execute(stmt)
+    repositories = list(result.scalars().all())
+
+    if not repositories:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Projeto não possui repositórios vinculados")
+
+    token = await get_github_token(db, account)
+    current_label_name = epic.label_name
+    new_label_name = _generate_label_name(display_name) if display_name else None
+    normalized_color = _normalize_color_for_label(color) if color else None
+
+    async with GithubRestClient(token) as client:
+        errors = []
+        for repo in repositories:
+            try:
+                await client.update_label(
+                    owner=repo.owner,
+                    repo=repo.repo_name,
+                    current_name=current_label_name,
+                    new_name=new_label_name,
+                    color=normalized_color,
+                    description=description,
+                )
+            except HTTPException as e:
+                errors.append(f"{repo.owner}/{repo.repo_name}: {e.detail}")
+
+        if errors:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Erro ao atualizar label: {', '.join(errors)}"
+            )
+
+    # Atualizar no banco local
+    if display_name:
+        epic.option_name = display_name
+        if new_label_name:
+            epic.label_name = new_label_name
+    if color:
+        epic.color = f"#{normalized_color}"
+    if description is not None:
+        epic.description = description
+
+    await db.commit()
+    await db.refresh(epic)
+
+    return epic
+
+
+async def delete_epic_label(
+    db: AsyncSession,
+    account: Account,
+    project: GithubProject,
+    epic_id: int,
+) -> None:
+    """
+    Deleta um épico (label) de todos os repositórios do projeto.
+    """
+    epic = await db.get(EpicOption, epic_id)
+    if not epic or epic.project_id != project.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Épico não encontrado")
+
+    # Buscar repositórios
+    stmt = select(ProjectRepository).where(ProjectRepository.project_id == project.id)
+    result = await db.execute(stmt)
+    repositories = list(result.scalars().all())
+
+    token = await get_github_token(db, account)
+
+    async with GithubRestClient(token) as client:
+        errors = []
+        for repo in repositories:
+            try:
+                await client.delete_label(
+                    owner=repo.owner,
+                    repo=repo.repo_name,
+                    name=epic.label_name,
+                )
+            except HTTPException as e:
+                # Se label não existe no repo, ignora (404)
+                if e.status_code != 404:
+                    errors.append(f"{repo.owner}/{repo.repo_name}: {e.detail}")
+
+        if errors:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Erro ao deletar label: {', '.join(errors)}"
+            )
+
+    # Deletar do banco local
+    await db.delete(epic)
+    await db.commit()
+
+
+async def list_epic_labels(db: AsyncSession, project: GithubProject) -> list[EpicOption]:
+    """
+    Lista todos os épicos (labels) do projeto.
+    """
+    stmt = select(EpicOption).where(EpicOption.project_id == project.id).order_by(EpicOption.option_name)
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
 
 
 async def _create_iteration_field(
