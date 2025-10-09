@@ -823,7 +823,8 @@ async def get_epic_dashboard(
     result = await db.execute(stmt)
     items = list(result.scalars().all())
 
-    options = await list_epic_options(db, project)
+    # Use list_epic_labels (from database) instead of list_epic_options (from GitHub)
+    options = await list_epic_labels(db, project)
     done_keywords = {
         "done",
         "concluído",
@@ -839,8 +840,9 @@ async def get_epic_dashboard(
     option_responses = [
         EpicOptionResponse(
             id=option.id,
-            name=option.name,
+            name=option.option_name,  # Use option_name instead of name
             color=option.color,
+            description=option.description,
         )
         for option in options
     ]
