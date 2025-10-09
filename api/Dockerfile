@@ -9,12 +9,17 @@ WORKDIR /app
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     gcc \
+    g++ \
+    make \
+    libffi-dev \
+    libssl-dev \
+    python3-dev \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Copiar e instalar dependências Python
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir --user --timeout=300 -v -r requirements.txt
 
 # Stage 2: Runtime
 FROM python:3.12-slim
