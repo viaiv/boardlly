@@ -28,6 +28,8 @@ from app.schemas.github import (
     EpicCreateRequest,
     EpicCreateResponse,
     EpicSummaryResponse,
+    StoryCreateRequest,
+    StoryCreateResponse,
     IterationDashboardResponse,
     IterationOptionResponse,
     IterationSummaryResponse,
@@ -63,6 +65,7 @@ from app.services.github import (
     GithubGraphQLClient,
     apply_local_project_item_updates,
     create_epic_issue,
+    create_story_issue,
     fetch_project_item_comments,
     fetch_project_item_details,
     get_github_token,
@@ -1057,6 +1060,54 @@ async def create_epic(
         )
 
     return EpicCreateResponse(
+        issue_number=result["issue_number"],
+        issue_url=result["issue_url"],
+        issue_node_id=result["issue_node_id"],
+    )
+
+
+@router.post("/current/stories", response_model=StoryCreateResponse, status_code=status.HTTP_201_CREATED)
+async def create_story(
+    story_data: StoryCreateRequest,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: AppUser = Depends(deps.get_current_user),
+    x_project_id: int | None = Header(None, alias="X-Project-Id"),
+) -> StoryCreateResponse:
+    """Cria uma nova história (issue) no GitHub, adiciona ao projeto e vincula ao épico especificado"""
+    account = await _get_account_or_404(db, current_user)
+    project = await _get_project_or_404(db, account, x_project_id)
+    token = await get_github_token(db, account)
+
+    # Get epic field ID
+    epic_field_id = None
+    stmt = select(GithubProjectField).where(
+        GithubProjectField.project_id == project.id,
+        GithubProjectField.field_type.in_(["single_select", "projectv2singleselectfield"])
+    )
+    result = await db.execute(stmt)
+    fields = list(result.scalars().all())
+
+    # Find the Epic field
+    for field in fields:
+        field_name_lower = (field.field_name or "").lower()
+        if any(alias in field_name_lower for alias in ["epic", "épico"]):
+            epic_field_id = field.field_id
+            break
+
+    async with GithubGraphQLClient(token) as client:
+        result = await create_story_issue(
+            client=client,
+            owner=project.owner_login,
+            repository=story_data.repository,
+            title=story_data.title,
+            description=story_data.description,
+            labels=story_data.labels,
+            project_node_id=project.project_node_id,
+            epic_field_id=epic_field_id,
+            epic_option_id=story_data.epic_option_id,
+        )
+
+    return StoryCreateResponse(
         issue_number=result["issue_number"],
         issue_url=result["issue_url"],
         issue_node_id=result["issue_node_id"],

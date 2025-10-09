@@ -2455,3 +2455,140 @@ async def create_epic_issue(
         "issue_node_id": issue_node_id,
         "project_item_node_id": project_item_node_id,
     }
+
+
+async def create_story_issue(
+    client: GithubGraphQLClient,
+    owner: str,
+    repository: str,
+    title: str,
+    description: Optional[str],
+    labels: list[str],
+    project_node_id: str,
+    epic_field_id: Optional[str],
+    epic_option_id: Optional[str],
+) -> dict[str, Any]:
+    """
+    Cria uma história (issue) no GitHub, adiciona ao projeto e vincula ao campo Epic.
+
+    Similar ao create_epic_issue, mas sem prefixo "EPIC:" no título.
+
+    Returns dict with: issue_number, issue_url, issue_node_id, project_item_node_id
+    """
+    # Step 1: Get repository node_id
+    repo_query = """
+    query($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) {
+        id
+      }
+    }
+    """
+    repo_data = await client.execute(repo_query, {"owner": owner, "name": repository})
+    repo_node_id = repo_data.get("repository", {}).get("id")
+    if not repo_node_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Repositório {owner}/{repository} não encontrado")
+
+    # Step 2: Create issue (without EPIC: prefix for stories)
+    create_mutation = """
+    mutation($repositoryId: ID!, $title: String!, $body: String, $labelIds: [ID!]) {
+      createIssue(input: {repositoryId: $repositoryId, title: $title, body: $body, labelIds: $labelIds}) {
+        issue {
+          id
+          number
+          url
+        }
+      }
+    }
+    """
+
+    # Get label IDs if labels provided
+    label_ids = []
+    if labels:
+        labels_query = """
+        query($owner: String!, $name: String!, $first: Int!) {
+          repository(owner: $owner, name: $name) {
+            labels(first: $first) {
+              nodes {
+                id
+                name
+              }
+            }
+          }
+        }
+        """
+        labels_data = await client.execute(labels_query, {"owner": owner, "name": repository, "first": 100})
+        repo_labels = labels_data.get("repository", {}).get("labels", {}).get("nodes", [])
+        label_map = {lbl["name"]: lbl["id"] for lbl in repo_labels if lbl.get("name") and lbl.get("id")}
+        label_ids = [label_map[lbl] for lbl in labels if lbl in label_map]
+
+    create_variables = {
+        "repositoryId": repo_node_id,
+        "title": title,  # No prefix for stories
+        "body": description,
+        "labelIds": label_ids if label_ids else None,
+    }
+
+    create_data = await client.execute(create_mutation, create_variables)
+    issue = create_data.get("createIssue", {}).get("issue", {})
+    if not issue or not issue.get("id"):
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="Falha ao criar issue no GitHub")
+
+    issue_node_id = issue["id"]
+    issue_number = issue["number"]
+    issue_url = issue["url"]
+
+    # Step 3: Add issue to project
+    add_to_project_mutation = """
+    mutation($projectId: ID!, $contentId: ID!) {
+      addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
+        item {
+          id
+        }
+      }
+    }
+    """
+
+    add_variables = {
+        "projectId": project_node_id,
+        "contentId": issue_node_id,
+    }
+
+    add_data = await client.execute(add_to_project_mutation, add_variables)
+    project_item = add_data.get("addProjectV2ItemById", {}).get("item", {})
+    project_item_node_id = project_item.get("id")
+
+    if not project_item_node_id:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="Issue criada mas falhou ao adicionar ao projeto")
+
+    # Step 4: Set Epic field value if provided
+    if epic_field_id and epic_option_id:
+        set_field_mutation = """
+        mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: ProjectV2FieldValue!) {
+          updateProjectV2ItemFieldValue(input: {
+            projectId: $projectId,
+            itemId: $itemId,
+            fieldId: $fieldId,
+            value: $value
+          }) {
+            projectV2Item {
+              id
+            }
+          }
+        }
+        """
+
+        field_variables = {
+            "projectId": project_node_id,
+            "itemId": project_item_node_id,
+            "fieldId": epic_field_id,
+            "value": {"singleSelectOptionId": epic_option_id},
+        }
+
+        await client.execute(set_field_mutation, field_variables)
+
+    return {
+        "issue_number": issue_number,
+        "issue_url": issue_url,
+        "issue_node_id": issue_node_id,
+        "project_item_node_id": project_item_node_id,
+    }

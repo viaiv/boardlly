@@ -3,6 +3,8 @@ import { type DragEvent, useCallback, useEffect, useMemo, useState } from "react
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -10,6 +12,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { toast } from "sonner";
+import { Loader2, Plus } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
@@ -30,6 +42,9 @@ import {
 } from "@/lib/project-items";
 import { HierarchyView } from "@/components/hierarchy-view";
 import { getProjectHierarchy, type HierarchyResponse } from "@/lib/hierarchy";
+import { createStory, type StoryCreateData, type StoryFormTemplate, generateStoryTemplate } from "@/lib/stories";
+import { listRepositories, type ProjectRepository } from "@/lib/repositories";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface ProjectInfo {
   id: number;
@@ -199,6 +214,35 @@ export function Roadmap() {
   const [hierarchy, setHierarchy] = useState<HierarchyResponse | null>(null);
   const [hierarchyLoading, setHierarchyLoading] = useState(false);
   const [hierarchyViewMode, setHierarchyViewMode] = useState<"list" | "flow">("list");
+  const [storyDialogOpen, setStoryDialogOpen] = useState(false);
+  const [storyFormData, setStoryFormData] = useState<StoryCreateData>({
+    title: "",
+    description: "",
+    repository: "",
+    epic_option_id: null,
+    labels: [],
+  });
+  const [storyTemplate, setStoryTemplate] = useState<StoryFormTemplate>({
+    problema_atual: "",
+    objetivo_resultado: "",
+    hipotese_valor: "",
+    criterios_aceite: "",
+    fluxo_usuario: "",
+    permissoes: "",
+    impacto_github: "",
+    jobs_sincronizacao: "",
+    dados_persistidos: "",
+    dependencias_tecnicas: "",
+    telemetria: "",
+    kpis_alvo: "",
+    logs_alertas: "",
+    testes_automatizados: "",
+    cobertura_minima: "",
+    cenarios_manuais: "",
+    dados_teste: "",
+  });
+  const [storySubmitting, setStorySubmitting] = useState(false);
+  const [repositories, setRepositories] = useState<ProjectRepository[]>([]);
 
   const fetchDashboards = useCallback(async () => {
     setDashboardsLoading(true);
@@ -256,6 +300,19 @@ export function Roadmap() {
   useEffect(() => {
     void fetchHierarchy();
   }, [fetchHierarchy]);
+
+  useEffect(() => {
+    // Load repositories when component mounts
+    const loadRepositories = async () => {
+      try {
+        const repos = await listRepositories();
+        setRepositories(repos);
+      } catch (error) {
+        console.error("Erro ao carregar repositórios:", error);
+      }
+    };
+    void loadRepositories();
+  }, []);
 
   const getErrorMessage = (err: unknown, fallback: string): string =>
     err instanceof Error ? err.message : fallback;
@@ -533,6 +590,76 @@ export function Roadmap() {
     await loadEditorData(editorItem.id);
   }, [editorItem, loadEditorData]);
 
+  const handleCreateStory = async () => {
+    if (!storyFormData.title.trim()) {
+      toast.error("Título da história é obrigatório");
+      return;
+    }
+
+    if (!storyFormData.repository.trim()) {
+      toast.error("Repositório é obrigatório");
+      return;
+    }
+
+    try {
+      setStorySubmitting(true);
+
+      // Gera o corpo da issue usando o template Tactyo
+      const generatedDescription = generateStoryTemplate(storyTemplate);
+
+      const dataToSend: StoryCreateData = {
+        ...storyFormData,
+        description: generatedDescription,
+      };
+
+      const result = await createStory(dataToSend);
+      toast.success(`História criada com sucesso! #${result.issue_number}`, {
+        description: "A história foi adicionada ao projeto e aparecerá no próximo sync.",
+        action: {
+          label: "Ver no GitHub",
+          onClick: () => window.open(result.issue_url, "_blank"),
+        },
+      });
+      setStoryDialogOpen(false);
+      setStoryFormData({
+        title: "",
+        description: "",
+        repository: "",
+        epic_option_id: null,
+        labels: [],
+      });
+      setStoryTemplate({
+        problema_atual: "",
+        objetivo_resultado: "",
+        hipotese_valor: "",
+        criterios_aceite: "",
+        fluxo_usuario: "",
+        permissoes: "",
+        impacto_github: "",
+        jobs_sincronizacao: "",
+        dados_persistidos: "",
+        dependencias_tecnicas: "",
+        telemetria: "",
+        kpis_alvo: "",
+        logs_alertas: "",
+        testes_automatizados: "",
+        cobertura_minima: "",
+        cenarios_manuais: "",
+        dados_teste: "",
+      });
+      // Reload items after a short delay to allow sync
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
+    } catch (error) {
+      toast.error("Erro ao criar história", {
+        description: error instanceof Error ? error.message : "Erro desconhecido",
+      });
+    } finally {
+      setStorySubmitting(false);
+    }
+  };
+
   const timeline = useMemo(() => {
     const withDates: TimelinePreparedItem[] = filteredItems
       .map((item) => {
@@ -762,6 +889,13 @@ export function Roadmap() {
           </p>
         </header>
         <div className="flex items-center gap-2">
+          <Button
+            variant="default"
+            onClick={() => setStoryDialogOpen(true)}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Nova História
+          </Button>
           <Button
             variant={viewMode === "board" ? "default" : "outline"}
             onClick={() => setViewMode("board")}
@@ -1306,6 +1440,339 @@ export function Roadmap() {
           />
         )}
       </div>
+
+      {/* Dialog de criação de história */}
+      <Dialog
+        open={storyDialogOpen}
+        onOpenChange={(open) => {
+          if (!storySubmitting) {
+            setStoryDialogOpen(open);
+            if (!open) {
+              setStoryFormData({
+                title: "",
+                description: "",
+                repository: "",
+                epic_option_id: null,
+                labels: [],
+              });
+              setStoryTemplate({
+                problema_atual: "",
+                objetivo_resultado: "",
+                hipotese_valor: "",
+                criterios_aceite: "",
+                fluxo_usuario: "",
+                permissoes: "",
+                impacto_github: "",
+                jobs_sincronizacao: "",
+                dados_persistidos: "",
+                dependencias_tecnicas: "",
+                telemetria: "",
+                kpis_alvo: "",
+                logs_alertas: "",
+                testes_automatizados: "",
+                cobertura_minima: "",
+                cenarios_manuais: "",
+                dados_teste: "",
+              });
+            }
+          }
+        }}
+      >
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Criar Nova História</DialogTitle>
+            <DialogDescription>
+              Preencha os campos seguindo o template Tactyo para criar uma história (issue) completa
+            </DialogDescription>
+          </DialogHeader>
+
+          <Tabs defaultValue="basico" className="w-full">
+            <TabsList className="grid w-full grid-cols-6">
+              <TabsTrigger value="basico">Básico</TabsTrigger>
+              <TabsTrigger value="visao">Visão</TabsTrigger>
+              <TabsTrigger value="experiencia">Experiência</TabsTrigger>
+              <TabsTrigger value="regras">Regras</TabsTrigger>
+              <TabsTrigger value="dependencias">Dependências</TabsTrigger>
+              <TabsTrigger value="qa">QA & Métricas</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="basico" className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="story-title">Título *</Label>
+                <Input
+                  id="story-title"
+                  placeholder="Ex: Implementar autenticação de usuário"
+                  value={storyFormData.title}
+                  onChange={(e) => setStoryFormData({ ...storyFormData, title: e.target.value })}
+                  disabled={storySubmitting}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="story-repository">Repositório *</Label>
+                <Select
+                  value={storyFormData.repository}
+                  onValueChange={(value) => setStoryFormData({ ...storyFormData, repository: value })}
+                  disabled={storySubmitting}
+                >
+                  <SelectTrigger id="story-repository">
+                    <SelectValue placeholder="Selecione um repositório" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {repositories.length === 0 ? (
+                      <SelectItem value="__no_repos__" disabled>
+                        Nenhum repositório vinculado
+                      </SelectItem>
+                    ) : (
+                      repositories.map((repo) => (
+                        <SelectItem key={repo.id} value={repo.repo_name}>
+                          {repo.owner}/{repo.repo_name}
+                          {repo.is_primary ? " (principal)" : ""}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="story-epic">Épico (opcional)</Label>
+                <Select
+                  value={storyFormData.epic_option_id || "__none__"}
+                  onValueChange={(value) => setStoryFormData({ ...storyFormData, epic_option_id: value === "__none__" ? null : value })}
+                  disabled={storySubmitting}
+                >
+                  <SelectTrigger id="story-epic">
+                    <SelectValue placeholder="Selecione um épico" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Sem épico</SelectItem>
+                    {epicOptionsForEditor.map((epic) => (
+                      <SelectItem key={epic.id} value={epic.id}>
+                        {epic.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="visao" className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="problema-atual">Problema Atual</Label>
+                <Textarea
+                  id="problema-atual"
+                  placeholder="Descreva o problema ou situação atual que esta história resolve"
+                  value={storyTemplate.problema_atual}
+                  onChange={(e) => setStoryTemplate({ ...storyTemplate, problema_atual: e.target.value })}
+                  disabled={storySubmitting}
+                  rows={3}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="objetivo-resultado">Objetivo/Resultado</Label>
+                <Textarea
+                  id="objetivo-resultado"
+                  placeholder="Qual o objetivo esperado e resultado desejado?"
+                  value={storyTemplate.objetivo_resultado}
+                  onChange={(e) => setStoryTemplate({ ...storyTemplate, objetivo_resultado: e.target.value })}
+                  disabled={storySubmitting}
+                  rows={3}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="hipotese-valor">Hipótese de Valor</Label>
+                <Textarea
+                  id="hipotese-valor"
+                  placeholder="Se entregarmos <mudança proposta>, esperamos <métrica/efeito medível> porque <insight ou evidência>"
+                  value={storyTemplate.hipotese_valor}
+                  onChange={(e) => setStoryTemplate({ ...storyTemplate, hipotese_valor: e.target.value })}
+                  disabled={storySubmitting}
+                  rows={3}
+                />
+              </div>
+            </TabsContent>
+
+            <TabsContent value="experiencia" className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="criterios-aceite">Critérios de Aceite (Given/When/Then)</Label>
+                <Textarea
+                  id="criterios-aceite"
+                  placeholder="Given (contexto)... When (ação)... Then (resultado esperado)..."
+                  value={storyTemplate.criterios_aceite}
+                  onChange={(e) => setStoryTemplate({ ...storyTemplate, criterios_aceite: e.target.value })}
+                  disabled={storySubmitting}
+                  rows={6}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="fluxo-usuario">Fluxo do Usuário</Label>
+                <Textarea
+                  id="fluxo-usuario"
+                  placeholder="Descreva resumidamente o fluxo que o usuário seguirá"
+                  value={storyTemplate.fluxo_usuario}
+                  onChange={(e) => setStoryTemplate({ ...storyTemplate, fluxo_usuario: e.target.value })}
+                  disabled={storySubmitting}
+                  rows={4}
+                />
+              </div>
+            </TabsContent>
+
+            <TabsContent value="regras" className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="permissoes">Permissões</Label>
+                <Textarea
+                  id="permissoes"
+                  placeholder="Quem pode ver/editar/aprovar? Considere as roles do RBAC (viewer, editor, pm, admin, owner)"
+                  value={storyTemplate.permissoes}
+                  onChange={(e) => setStoryTemplate({ ...storyTemplate, permissoes: e.target.value })}
+                  disabled={storySubmitting}
+                  rows={3}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="impacto-github">Impacto GitHub Projects</Label>
+                <Textarea
+                  id="impacto-github"
+                  placeholder="Queries/mutações, campos customizados, tokens GitHub necessários"
+                  value={storyTemplate.impacto_github}
+                  onChange={(e) => setStoryTemplate({ ...storyTemplate, impacto_github: e.target.value })}
+                  disabled={storySubmitting}
+                  rows={3}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="jobs-sincronizacao">Jobs/Sincronização</Label>
+                <Textarea
+                  id="jobs-sincronizacao"
+                  placeholder="Cron ou gatilho webhook impactado (APScheduler jobs)"
+                  value={storyTemplate.jobs_sincronizacao}
+                  onChange={(e) => setStoryTemplate({ ...storyTemplate, jobs_sincronizacao: e.target.value })}
+                  disabled={storySubmitting}
+                  rows={3}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="dados-persistidos">Dados Persistidos</Label>
+                <Textarea
+                  id="dados-persistidos"
+                  placeholder="Tabelas/campos FastAPI/Postgres afetados, migrações Alembic necessárias"
+                  value={storyTemplate.dados_persistidos}
+                  onChange={(e) => setStoryTemplate({ ...storyTemplate, dados_persistidos: e.target.value })}
+                  disabled={storySubmitting}
+                  rows={3}
+                />
+              </div>
+            </TabsContent>
+
+            <TabsContent value="dependencias" className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="dependencias-tecnicas">Dependências Técnicas</Label>
+                <Textarea
+                  id="dependencias-tecnicas"
+                  placeholder="Módulos, migrações, feature flags, outras histórias/épicos dependentes"
+                  value={storyTemplate.dependencias_tecnicas}
+                  onChange={(e) => setStoryTemplate({ ...storyTemplate, dependencias_tecnicas: e.target.value })}
+                  disabled={storySubmitting}
+                  rows={4}
+                />
+              </div>
+            </TabsContent>
+
+            <TabsContent value="qa" className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="testes-automatizados">Testes Automatizados</Label>
+                <Textarea
+                  id="testes-automatizados"
+                  placeholder="Unit/integração, caminhos feliz/triste (npm test, pytest)"
+                  value={storyTemplate.testes_automatizados}
+                  onChange={(e) => setStoryTemplate({ ...storyTemplate, testes_automatizados: e.target.value })}
+                  disabled={storySubmitting}
+                  rows={3}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="cobertura-minima">Cobertura Mínima</Label>
+                <Textarea
+                  id="cobertura-minima"
+                  placeholder="% ou arquivos-chave que devem ter cobertura de testes"
+                  value={storyTemplate.cobertura_minima}
+                  onChange={(e) => setStoryTemplate({ ...storyTemplate, cobertura_minima: e.target.value })}
+                  disabled={storySubmitting}
+                  rows={2}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="cenarios-manuais">Cenários Manuais</Label>
+                <Textarea
+                  id="cenarios-manuais"
+                  placeholder="Checklist para smoke na dev/staging"
+                  value={storyTemplate.cenarios_manuais}
+                  onChange={(e) => setStoryTemplate({ ...storyTemplate, cenarios_manuais: e.target.value })}
+                  disabled={storySubmitting}
+                  rows={3}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="dados-teste">Dados de Teste</Label>
+                <Textarea
+                  id="dados-teste"
+                  placeholder="Fixtures ou scripts necessários para testes"
+                  value={storyTemplate.dados_teste}
+                  onChange={(e) => setStoryTemplate({ ...storyTemplate, dados_teste: e.target.value })}
+                  disabled={storySubmitting}
+                  rows={2}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="telemetria">Telemetria</Label>
+                <Textarea
+                  id="telemetria"
+                  placeholder="Eventos, dashboards de monitoramento"
+                  value={storyTemplate.telemetria}
+                  onChange={(e) => setStoryTemplate({ ...storyTemplate, telemetria: e.target.value })}
+                  disabled={storySubmitting}
+                  rows={2}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="kpis-alvo">KPIs Alvo</Label>
+                <Textarea
+                  id="kpis-alvo"
+                  placeholder="Ex: tempo de aprovação, itens convertidos, velocidade"
+                  value={storyTemplate.kpis_alvo}
+                  onChange={(e) => setStoryTemplate({ ...storyTemplate, kpis_alvo: e.target.value })}
+                  disabled={storySubmitting}
+                  rows={2}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="logs-alertas">Logs/Alertas</Label>
+                <Textarea
+                  id="logs-alertas"
+                  placeholder="Ajustes em logging/monitoramento necessários"
+                  value={storyTemplate.logs_alertas}
+                  onChange={(e) => setStoryTemplate({ ...storyTemplate, logs_alertas: e.target.value })}
+                  disabled={storySubmitting}
+                  rows={2}
+                />
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setStoryDialogOpen(false)}
+              disabled={storySubmitting}
+            >
+              Cancelar
+            </Button>
+            <Button onClick={handleCreateStory} disabled={storySubmitting}>
+              {storySubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Criar História
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ProjectItemEditor
         item={editorItem}

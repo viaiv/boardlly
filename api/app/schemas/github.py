@@ -224,3 +224,19 @@ class EpicCreateResponse(BaseModel):
     issue_number: int
     issue_url: str
     issue_node_id: str
+
+
+class StoryCreateRequest(BaseModel):
+    """Request para criar uma nova história (issue) no GitHub"""
+    title: str = Field(min_length=1, max_length=500)
+    description: str | None = Field(default=None, max_length=65536)
+    repository: str = Field(min_length=1, max_length=255)  # Nome do repositório (ex: "meu-repo")
+    epic_option_id: str | None = None  # ID da opção Epic para vincular (obrigatório para histórias)
+    labels: list[str] = Field(default_factory=list)  # Labels opcionais
+
+
+class StoryCreateResponse(BaseModel):
+    """Response após criar história"""
+    issue_number: int
+    issue_url: str
+    issue_node_id: str
