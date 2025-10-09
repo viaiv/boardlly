@@ -28,7 +28,7 @@ export function Hierarchy() {
 
     try {
       setLoading(true);
-      const data = await getProjectHierarchy(activeProject.id);
+      const data = await getProjectHierarchy();
       setHierarchy(data);
 
       // Auto-expand first level

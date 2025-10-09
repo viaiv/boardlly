@@ -55,7 +55,7 @@ export function HierarchyView({ hierarchy, viewMode, onItemClick }: HierarchyVie
     const HORIZONTAL_SPACING = 250;
 
     // Process each epic
-    hierarchy.epics.forEach((epic, epicIndex) => {
+    hierarchy.epics.forEach((epic) => {
       const epicNodeId = `epic-${epic.epic_option_id || "no-epic"}`;
 
       // Create epic node
