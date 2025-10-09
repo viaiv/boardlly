@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import { apiFetch } from "./api";
+import { useSession } from "./session";
 
 const ACTIVE_PROJECT_KEY = "tactyo:active-project-id";
 
@@ -35,6 +36,7 @@ export interface ProjectState {
 const ProjectContext = createContext<ProjectState | undefined>(undefined);
 
 export function ProjectProvider({ children }: { children: ReactNode }) {
+  const { status: sessionStatus } = useSession();
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<number | null>(() => {
@@ -48,10 +50,17 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     setError(undefined);
     try {
       const data = await apiFetch<Project[]>("/api/projects");
+      console.log("🔍 [ProjectProvider] Projetos carregados:", {
+        count: data.length,
+        projects: data,
+        activeProjectId,
+        hasActiveInList: activeProjectId ? data.some((p) => p.id === activeProjectId) : null,
+      });
       setProjects(data);
 
       // Se o projeto ativo não existe mais na lista, remove a seleção
       if (activeProjectId && !data.some((p) => p.id === activeProjectId)) {
+        console.warn("⚠️ [ProjectProvider] Projeto ativo não encontrado na lista. Limpando localStorage.");
         setActiveProjectId(null);
         localStorage.removeItem(ACTIVE_PROJECT_KEY);
       }
@@ -59,6 +68,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       setStatus("ready");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Erro ao carregar projetos";
+      console.error("❌ [ProjectProvider] Erro ao carregar projetos:", err);
       setError(message);
       setStatus("error");
     }
@@ -69,9 +79,19 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(ACTIVE_PROJECT_KEY, String(projectId));
   }, []);
 
+  // Só carregar projetos quando estiver autenticado
   useEffect(() => {
-    void loadProjects();
-  }, [loadProjects]);
+    if (sessionStatus === "authenticated") {
+      console.log("✅ [ProjectProvider] Usuário autenticado, carregando projetos...");
+      void loadProjects();
+    } else if (sessionStatus === "unauthenticated") {
+      console.log("🚪 [ProjectProvider] Usuário não autenticado, limpando projetos...");
+      // Limpar projetos ao fazer logout
+      setProjects([]);
+      setActiveProjectId(null);
+      setStatus("ready");
+    }
+  }, [sessionStatus, loadProjects]);
 
   const activeProject = useMemo(
     () => projects.find((p) => p.id === activeProjectId) ?? null,
