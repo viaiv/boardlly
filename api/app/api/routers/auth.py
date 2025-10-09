@@ -7,6 +7,9 @@ from app.api import deps
 from app.core.security import clear_session, ensure_password_strength, establish_session
 from app.models.account import Account
 from app.models.user import AppUser
+from app.models.project_invite import ProjectInvite
+from app.models.github_project import GithubProject
+from app.models.project_member import ProjectMember
 from app.schemas.auth import (
     LoginRequest,
     RegisterRequest,
@@ -55,10 +58,56 @@ async def register_user(
 
     account: Account | None = None
     role: str
+    project_invite: ProjectInvite | None = None
+    is_invite_registration = False
 
-    if total_users == 0:
+    # Verificar se há um token de convite
+    if payload.invite_token:
+        # Buscar convite pelo token
+        stmt = select(ProjectInvite).where(
+            ProjectInvite.invite_token == payload.invite_token,
+            ProjectInvite.status == "pending"
+        )
+        result = await db.execute(stmt)
+        project_invite = result.scalar_one_or_none()
+
+        if not project_invite:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                detail="Convite inválido ou já utilizado"
+            )
+
+        # Verificar se o email corresponde ao convite
+        if project_invite.invited_email.lower() != payload.email.lower():
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=f"Este convite foi enviado para {project_invite.invited_email}. Use o email correto."
+            )
+
+        # Buscar o projeto e a conta associada
+        project = await db.get(GithubProject, project_invite.project_id)
+        if not project:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                detail="Projeto não encontrado"
+            )
+
+        account = await db.get(Account, project.account_id)
+        if not account:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                detail="Conta não encontrada"
+            )
+
+        # Usar role do convite
+        role = project_invite.role
+        is_invite_registration = True
+
+    elif total_users == 0:
+        # Primeiro usuário do sistema
         role = "owner"
     else:
+        # Registro manual (requer autenticação)
         if current_user is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Autenticação necessária")
         if current_user.role not in {"admin", "owner"}:
@@ -68,6 +117,7 @@ async def register_user(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Conta não encontrada")
         role = payload.role
 
+    # Criar usuário
     user = await create_user(
         db,
         account=account,
@@ -77,14 +127,35 @@ async def register_user(
         name=payload.name,
     )
 
-    # Primeiro usuário (owner) é verificado automaticamente
-    if total_users == 0:
+    # Tratamento pós-criação
+    if is_invite_registration and project_invite:
+        # Usuário via convite: verificar email automaticamente e criar membro do projeto
+        user.email_verified = True
+        user.email_verification_token = None
+        user.email_verification_token_expires = None
+
+        # Criar ProjectMember
+        project_member = ProjectMember(
+            project_id=project_invite.project_id,
+            user_id=user.id,
+            role=project_invite.role
+        )
+        db.add(project_member)
+
+        # Marcar convite como aceito
+        project_invite.status = "accepted"
+
+        # Fazer login automático
+        establish_session(request, str(user.id))
+
+    elif total_users == 0:
+        # Primeiro usuário (owner) é verificado automaticamente
         user.email_verified = True
         user.email_verification_token = None
         user.email_verification_token_expires = None
         establish_session(request, str(user.id))
     else:
-        # Enviar email de verificação para novos usuários
+        # Enviar email de verificação para novos usuários (registro manual)
         try:
             await send_email_verification(
                 to_email=user.email,

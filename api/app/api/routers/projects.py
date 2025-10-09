@@ -18,6 +18,7 @@ from app.models.project_invite import ProjectInvite
 from app.models.project_repository import ProjectRepository
 from app.models.user import AppUser
 from app.services.email import send_project_invite_email
+from app.core.security import generate_verification_token
 from app.schemas.github import (
     GithubProjectResponse,
     EpicDashboardResponse,
@@ -1680,6 +1681,7 @@ async def create_project_invite(
             existing_invite.status = "pending"
             existing_invite.role = payload.role
             existing_invite.invited_by_user_id = current_user.id
+            existing_invite.invite_token = generate_verification_token()
             await db.commit()
             await db.refresh(existing_invite)
             new_invite = existing_invite
@@ -1688,6 +1690,7 @@ async def create_project_invite(
             existing_invite.status = "pending"
             existing_invite.role = payload.role
             existing_invite.invited_by_user_id = current_user.id
+            existing_invite.invite_token = generate_verification_token()
             await db.commit()
             await db.refresh(existing_invite)
             new_invite = existing_invite
@@ -1698,7 +1701,8 @@ async def create_project_invite(
             invited_email=invited_email,
             invited_by_user_id=current_user.id,
             role=payload.role,
-            status="pending"
+            status="pending",
+            invite_token=generate_verification_token()
         )
         db.add(new_invite)
         await db.commit()
@@ -1711,6 +1715,7 @@ async def create_project_invite(
             inviter_name=current_user.name or current_user.email,
             project_name=project.name or f"{project.owner_login}/{project.project_number}",
             role=payload.role,
+            invite_token=new_invite.invite_token,
         )
     except Exception as e:
         # Log error but don't fail the request

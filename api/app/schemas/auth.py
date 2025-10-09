@@ -13,6 +13,7 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=8)
     name: Optional[str] = None
     role: UserRole = "viewer"
+    invite_token: Optional[str] = Field(default=None, description="Token de convite para registro via convite de projeto")
 
 
 class LoginRequest(BaseModel):

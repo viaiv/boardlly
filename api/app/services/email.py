@@ -73,6 +73,7 @@ async def send_project_invite_email(
     inviter_name: str,
     project_name: str,
     role: str,
+    invite_token: str,
 ) -> None:
     """
     Envia email de convite para um projeto.
@@ -82,6 +83,7 @@ async def send_project_invite_email(
         inviter_name: Nome de quem enviou o convite
         project_name: Nome do projeto
         role: Permissão concedida (viewer, member, admin)
+        invite_token: Token único para validar o convite durante o registro
     """
     role_names = {
         "viewer": "Visualizador",
@@ -187,16 +189,16 @@ async def send_project_invite_email(
             Permissão: {role_display}
         </div>
 
-        <p>Para aceitar o convite, acesse a plataforma Tactyo e visualize seus convites pendentes:</p>
+        <p>Para aceitar o convite, clique no botão abaixo. Se você ainda não tem uma conta, poderá criar uma automaticamente:</p>
 
         <div style="text-align: center;">
-            <a href="{settings.frontend_url}/invites" class="cta-button">
-                Ver Convites
+            <a href="{settings.frontend_url}/register?invite_token={invite_token}" class="cta-button">
+                Aceitar Convite
             </a>
         </div>
 
         <div class="note">
-            <strong>ℹ️ Nota:</strong> Se você ainda não tem uma conta no Tactyo, será necessário criar uma usando este email ({to_email}) para poder aceitar o convite.
+            <strong>ℹ️ Nota:</strong> Este link permite criar sua conta diretamente e aceitar o convite. Use o email <strong>{to_email}</strong> ao se cadastrar.
         </div>
 
         <div class="footer">

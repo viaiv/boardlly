@@ -48,6 +48,13 @@ class ProjectInvite(Base):
         nullable=False
     )
 
+    invite_token: Mapped[str | None] = mapped_column(
+        String(length=64),
+        nullable=True,
+        unique=True,
+        index=True
+    )
+
     role: Mapped[str] = mapped_column(
         String(length=20),
         nullable=False,
