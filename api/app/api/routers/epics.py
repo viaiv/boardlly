@@ -85,6 +85,7 @@ async def list_epics_current(
             id=option.id,
             name=option.name,
             color=option.color,
+            description=option.description,
         )
         for option in epic_options
     ]
