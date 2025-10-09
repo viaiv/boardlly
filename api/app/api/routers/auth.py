@@ -107,9 +107,12 @@ async def register_user(
         # Primeiro usuário do sistema
         role = "owner"
     else:
-        # Registro manual (requer autenticação)
+        # Registro manual (requer autenticação ou convite)
         if current_user is None:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Autenticação necessária")
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail="Você precisa de um convite para se registrar na plataforma. Entre em contato com o administrador."
+            )
         if current_user.role not in {"admin", "owner"}:
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Permissão insuficiente")
         account = await db.get(Account, current_user.account_id)
