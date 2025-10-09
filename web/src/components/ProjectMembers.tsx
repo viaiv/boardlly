@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Send, Trash2 } from "lucide-react";
 
 import { apiFetch } from "@/lib/api";
 import { useSession } from "@/lib/session";
@@ -209,6 +209,24 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
     }
   };
 
+  const handleResendInvite = async (inviteId: number) => {
+    try {
+      const response = await apiFetch<{ message: string }>(
+        `/api/projects/${projectId}/invites/${inviteId}/resend`,
+        {
+          method: "POST",
+        }
+      );
+
+      toast.success(response.message || "Convite reenviado");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Erro ao reenviar convite";
+      toast.error("Erro ao reenviar convite", {
+        description: message,
+      });
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between">
@@ -367,14 +385,25 @@ export function ProjectMembers({ projectId }: ProjectMembersProps) {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleCancelInvite(invite.id)}
-                        className="text-destructive hover:text-destructive"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleResendInvite(invite.id)}
+                          title="Reenviar convite"
+                        >
+                          <Send className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleCancelInvite(invite.id)}
+                          className="text-destructive hover:text-destructive"
+                          title="Cancelar convite"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}

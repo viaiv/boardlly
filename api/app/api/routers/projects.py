@@ -2007,6 +2007,64 @@ async def cancel_project_invite(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.post("/{project_id}/invites/{invite_id}/resend", status_code=status.HTTP_200_OK)
+async def resend_project_invite(
+    project_id: int,
+    invite_id: int,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: AppUser = Depends(deps.require_roles("owner", "admin")),
+) -> dict[str, str]:
+    """
+    Reenvia o email de convite para um convite pendente.
+
+    **Permissão:** owner, admin
+
+    O convite deve estar pendente e pertencer ao projeto especificado.
+    Gera um novo token de convite e reenvia o email.
+    """
+    account = await _get_account_or_404(db, current_user)
+    project = await _get_project_or_404(db, account, project_id)
+
+    # Find invite
+    invite = await db.get(ProjectInvite, invite_id)
+    if not invite or invite.project_id != project.id:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail="Convite não encontrado neste projeto"
+        )
+
+    # Verify invite is pending
+    if invite.status != "pending":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=f"Convite já foi {invite.status}. Apenas convites pendentes podem ser reenviados."
+        )
+
+    # Generate new token
+    invite.invite_token = generate_verification_token()
+    await db.commit()
+    await db.refresh(invite)
+
+    # Send invitation email
+    try:
+        await send_project_invite_email(
+            to_email=invite.invited_email,
+            inviter_name=current_user.name or current_user.email,
+            project_name=project.name or f"{project.owner_login}/{project.project_number}",
+            role=invite.role,
+            invite_token=invite.invite_token,
+        )
+    except Exception as e:
+        # Log error but don't fail the request
+        print(f"⚠️  Falha ao reenviar email de convite: {e}")
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erro ao enviar email. Tente novamente mais tarde."
+        )
+
+    return {"message": "Email de convite reenviado com sucesso"}
+
+
 @router.get("/{project_id}/hierarchy", response_model=HierarchyResponse)
 async def get_project_hierarchy(
     project_id: int,
